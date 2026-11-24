@@ -1,0 +1,15 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "chaos-agent.postgresql.fullname" . }}
+  labels:
+    {{- include "chaos-agent.postgresql.selectorLabels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "chaos-agent.postgresql.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+{{- end }}

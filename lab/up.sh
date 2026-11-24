@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Creates the chaos-lab kind cluster, verifies zones, and installs the lab's Prometheus.
+# Creates the chaos-lab kind cluster, verifies zones, and installs Prometheus and the chaos-agent chart.
 set -euo pipefail
 
 CLUSTER_NAME="chaos-lab"
 ZONE_LABEL="topology.kubernetes.io/zone"
-PROMETHEUS_CHART_VERSION="<CHART_VERSION>"
+PROMETHEUS_CHART_VERSION="30.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+CHAOS_NAMESPACE="chaos-system"
 
 # 1. Prerequisites
 for tool in docker kind kubectl helm; do
@@ -64,6 +66,13 @@ helm upgrade --install prometheus prometheus-community/prometheus \
   -f "$SCRIPT_DIR/prometheus-values.yaml" \
   --wait --timeout 5m
 
+# 5. chaos-agent chart (installed the same way a customer would, with lab-specific values)
+helm upgrade --install chaos-agent "$REPO_DIR/charts/chaos-agent" \
+  --namespace "$CHAOS_NAMESPACE" --create-namespace \
+  -f "$SCRIPT_DIR/chaos-agent-values.yaml" \
+  --wait --timeout 5m
+
 echo "Lab $CLUSTER_NAME is ready:"
 kubectl get nodes -L "$ZONE_LABEL"
 kubectl -n monitoring get pods -o wide
+kubectl -n "$CHAOS_NAMESPACE" get pods -o wide

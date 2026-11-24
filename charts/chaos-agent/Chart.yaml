@@ -1,0 +1,6 @@
+apiVersion: v2
+name: chaos-agent
+description: AI agent that tests the resilience of Kubernetes applications within Rules of Engagement
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
