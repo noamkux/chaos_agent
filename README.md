@@ -1,8 +1,8 @@
-אני רוצה להבין משהו המנטור אמר שסופו של דבר האייג'נט הזה צריך להתחיל בקבלת מסמך שאומר מה האפלקציה שהוא בודק עכשיו זאת אומרת מה נכשב שבור ומה נחשב יציב בעייני עם נגיד אנחנו מדברים על עומס אז ךהסביר לאייג'נט של לחץ של 1000 בקשות זה הגבוולות שהמערכת צריכה לעמוד בו ושהוא יבין את זה ולא יריץ מבחן של 1000000 בקשות איפה זה קורה בארכיטקטורה שלנו?
+
 
 # AI Project - Chaos Agent
 
-### Day 1 - Create Env
+### Create Env
 
 1. Deployed a clean Online Boutique: an application we did not write, to test that the agent works on any application.
 2. Audited what is already broken in the upstream version (replicas, probes, PDBs, Redis). Without this step the agent would find real weaknesses we did not know about and be penalized for them as false positives.

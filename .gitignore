@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local secrets and environment
+.env
+
+# Editor
+.vscode/
+
+# Helm build output
+*.tgz
