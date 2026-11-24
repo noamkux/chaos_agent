@@ -1,0 +1,16 @@
+# W3 cpu-throttling: CPU limit far below what the service needs under load.
+# requests must not exceed limits, so both are lowered.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: productcatalogservice
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          resources:
+            requests:
+              cpu: 50m
+            limits:
+              cpu: 50m

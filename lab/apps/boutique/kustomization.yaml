@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: boutique
+resources:
+  - namespace.yaml
+  - upstream/kubernetes-manifests.yaml
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: loadgenerator
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: frontend-external
+  - path: patches/frontend-single-zone.yaml
+  - path: patches/currencyservice-aggressive-liveness.yaml
+  - path: patches/productcatalogservice-cpu-throttling.yaml
+  - path: patches/checkoutservice-secret-in-env.yaml
+
+replicas:
+  - name: frontend
+    count: 2
+  - name: cartservice
+    count: 2
+  - name: productcatalogservice
+    count: 2
+  - name: currencyservice
+    count: 2

@@ -1,0 +1,33 @@
+# no need for alertmanager in this project
+alertmanager:
+  enabled: false
+
+# no need for push gateway, prometahus will scrape the from Kube-state-metrics and k6 will do remote-write
+prometheus-pushgateway:
+  enabled: false
+
+server:
+  extraFlags:
+    # allow extra values to in this file to run over the default values instend of append
+    - web.enable-lifecycle
+    # allows remote write (for k6)
+    - web.enable-remote-write-receiver
+  retention: 2d
+  # run localy so the data is saved in a EmptyDir and not a pvc
+  persistentVolume:
+    enabled: false
+  # put the node away from the blast raduis (in prod will be in a sperate worker node that will not be affected on the cahos test)
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+kube-state-metrics:
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

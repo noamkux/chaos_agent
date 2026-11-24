@@ -1,0 +1,17 @@
+# W2 aggressive-liveness: one slow probe (over 1s) restarts the container.
+# Under load the pod gets killed by its own liveness probe.
+# initialDelaySeconds protects startup, so only load (not a slow boot) triggers restarts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: currencyservice
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          livenessProbe:
+            initialDelaySeconds: 15
+            periodSeconds: 2
+            timeoutSeconds: 1
+            failureThreshold: 1

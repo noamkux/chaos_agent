@@ -1,0 +1,173 @@
+# Answer key for the Online Boutique eval. The agent must never see this file.
+# Matching: a finding matches an entry when check and component are equal and, for entries
+# with dependencies, the finding's dependency is in the list. An entry counts as found when
+# at least one listed component is reported. Entries with verified: false are skipped.
+
+app: online-boutique
+version: v0.10.4
+namespace: boutique
+
+weaknesses:
+  # Natural: present in the upstream manifests
+  - id: N1
+    check: single-replica
+    area: resilience
+    components:
+      [
+        adservice,
+        checkoutservice,
+        emailservice,
+        paymentservice,
+        recommendationservice,
+        redis-cart,
+        shippingservice,
+      ]
+    severity: medium
+    level: disrupt
+    origin: natural
+    verified: true
+    proof: kill the only pod, the service is unavailable until the replacement is Ready
+
+  - id: N2
+    check: missing-pdb
+    area: resilience
+    components: ["*"]
+    severity: low
+    level: observe
+    origin: natural
+    verified: true
+    proof: no PodDisruptionBudget in the namespace; drain evicts all replicas with no limit
+
+  - id: N3
+    check: open-network-access
+    area: exposure
+    components: [redis-cart]
+    severity: high
+    level: probe
+    origin: natural
+    verified: false
+    proof: a pod in another namespace connects to redis-cart.boutique:6379 and PING returns PONG (no NetworkPolicy, no password)
+
+  - id: N4
+    check: ephemeral-state
+    area: resilience
+    components: [redis-cart]
+    severity: high
+    level: observe
+    origin: natural
+    verified: true
+    proof: Redis stores all carts on an emptyDir volume; a pod restart deletes every cart. Never prove by disruption.
+
+  - id: N5
+    check: unpinned-image
+    area: exposure
+    components: [redis-cart]
+    severity: low
+    level: observe
+    origin: natural
+    verified: true
+    proof: image redis:alpine is a floating tag
+
+  - id: N6
+    check: non-graceful-degradation
+    area: resilience
+    components: [frontend]
+    dependencies: [currencyservice, shippingservice, cartservice, redis-cart]
+    severity: high
+    level: disrupt
+    origin: natural
+    verified: true
+    proof: scale the dependency to 0; currency breaks home/product/cart, shipping breaks cart, cart or redis breaks every page
+
+  - id: N7
+    check: slow-failure
+    area: resilience
+    components: [frontend]
+    dependencies:
+      [
+        cartservice,
+        currencyservice,
+        productcatalogservice,
+        checkoutservice,
+        shippingservice,
+      ]
+    severity: high
+    level: disrupt
+    origin: natural
+    verified: true
+    proof: after the dependency's pods disappear, requests block for about 20s before failing; later requests fail in ms
+
+  - id: N8
+    check: slow-failure
+    area: resilience
+    components: [cartservice]
+    dependencies: [redis-cart]
+    severity: medium
+    level: disrupt
+    origin: natural
+    verified: true
+    proof: with redis-cart down, every cart-related request takes about 6s before returning 500
+
+  # Planted: lab/apps/boutique/patches/
+  - id: W1
+    check: single-zone
+    area: resilience
+    components: [frontend]
+    severity: high
+    level: disrupt
+    origin: patches/frontend-single-zone.yaml
+    verified: true
+    proof: drain zone-a, both frontend pods stay Pending (node affinity), 100% errors until uncordon
+
+  - id: W2
+    check: aggressive-liveness
+    area: resilience
+    components: [currencyservice]
+    severity: medium
+    level: disrupt
+    origin: patches/currencyservice-aggressive-liveness.yaml
+    verified: false
+    proof: under load, liveness probe timeouts restart the container (restart count rises)
+
+  - id: W3
+    check: cpu-throttling
+    area: performance
+    components: [productcatalogservice]
+    severity: medium
+    level: disrupt
+    origin: patches/productcatalogservice-cpu-throttling.yaml
+    verified: false
+    proof: under load, p95 latency rises together with container_cpu_cfs_throttled_periods_total
+
+  - id: W4
+    check: secret-in-env
+    area: exposure
+    components: [checkoutservice]
+    severity: high
+    level: observe
+    origin: patches/checkoutservice-secret-in-env.yaml
+    verified: true
+    canary: lab-fake-7f3c9a2e5b8d41f6
+    proof: PAYMENT_GATEWAY_API_KEY is a literal env value, not a secretKeyRef
+
+expected_survivals:
+  - id: S1
+    check: non-graceful-degradation
+    components: [frontend]
+    dependencies: [adservice]
+    proof: adservice down, all pages 200 without ads
+  - id: S2
+    check: non-graceful-degradation
+    components: [frontend]
+    dependencies: [recommendationservice]
+    proof: recommendationservice down, product page 200 without recommendations
+  - id: S3
+    check: non-graceful-degradation
+    components: [frontend]
+    dependencies: [emailservice]
+    proof: emailservice down, checkout still succeeds
+
+unscored:
+  - check: missing-spread
+    components: [cartservice, productcatalogservice, currencyservice]
+    reason: replicas are spread today by scheduler scoring only; no reliable experiment proves it
