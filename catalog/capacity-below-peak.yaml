@@ -1,0 +1,20 @@
+# Index: shown to the agent in the system prompt
+name: capacity-below-peak
+area: performance
+category: excessive-load
+summary: The workload breaks its SLO below the peak load it is expected to handle.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: high
+signals: >
+  No HorizontalPodAutoscaler, few replicas, or a profile peak far above current traffic.
+proof: >
+  Ramp k6 load in steps up to the profile's expected peak times its headroom, within the
+  Rules of Engagement RPS cap, and find the load at which the SLO breaks. If the cap is
+  below the target, report that the target could not be tested.
+confirmed_when: A journey breaks its SLO below the target load.
+survived_when: Every journey stays within its SLO at the target load.
+remediation: >
+  Add a HorizontalPodAutoscaler or replicas, and fix the bottleneck the test exposed.

@@ -1,0 +1,27 @@
+# Index: shown to the agent in the system prompt
+name: ephemeral-state
+area: resilience
+category: single-point-of-failure
+summary: >
+  A component that holds user data stores it on an emptyDir volume or the container
+  filesystem, so a pod restart deletes it.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: observe
+default_severity: high
+signals: >
+  A data store (Redis, a database, a queue) whose data directory is on an emptyDir
+  volume or has no volume at all.
+proof: >
+  Read the pod spec, the image and the command to establish that the component holds
+  state, and read the type of the volume behind its data directory. Never kill, restart
+  or scale the component to prove this check: the proof would delete user data.
+confirmed_when: >
+  A component that holds user data keeps it on emptyDir or on the container filesystem.
+survived_when: >
+  The data is on a PersistentVolumeClaim or an external store, or the component is a
+  cache whose loss has no user impact.
+remediation: >
+  Store the data on a PersistentVolumeClaim (usually through a StatefulSet) or in a
+  managed store. For a cache, make the loss explicit and harmless.

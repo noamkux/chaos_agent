@@ -1,0 +1,25 @@
+# Index: shown to the agent in the system prompt
+name: exposed-internal-endpoint
+area: exposure
+category: misconfiguration
+summary: >
+  An internal endpoint (metrics, debug, admin) is reachable through the user-facing
+  entrypoint.
+applies_to: [Service, Ingress]
+
+# Details: returned only by get_check
+max_level: probe
+default_severity: medium
+signals: >
+  Metrics, profiling, health details or admin routes served on the same port as user
+  traffic.
+proof: >
+  Send GET requests through the user-facing entrypoint to common internal paths such as
+  /metrics, /debug/pprof, /admin and /actuator. Record only the status code and content
+  type.
+confirmed_when: >
+  An internal path returns 200 with internal data through the user-facing entrypoint.
+survived_when: Internal paths return 404 or 403, or are not routed to users.
+remediation: >
+  Serve internal endpoints on a separate port that is not exposed, or block them in the
+  routing layer.

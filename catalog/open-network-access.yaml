@@ -1,0 +1,25 @@
+# Index: shown to the agent in the system prompt
+name: open-network-access
+area: exposure
+category: misconfiguration
+summary: >
+  An internal component can be reached from anywhere in the cluster without
+  authentication.
+applies_to: [Service]
+
+# Details: returned only by get_check
+max_level: probe
+default_severity: high
+signals: >
+  No NetworkPolicy selects the component's pods, and the component (often a data store)
+  accepts connections without authentication.
+proof: >
+  From a probe pod in another namespace, connect to the service port and send a harmless
+  handshake only (a TCP connect, a Redis PING, an HTTP HEAD). Never read or write data.
+confirmed_when: >
+  The connection from an unrelated namespace succeeds and the component answers without
+  authentication.
+survived_when: The connection is blocked, or the component requires authentication.
+remediation: >
+  Add a default-deny NetworkPolicy with explicit allows for the real callers, and enable
+  authentication on the component.

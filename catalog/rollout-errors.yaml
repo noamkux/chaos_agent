@@ -1,0 +1,25 @@
+# Index: shown to the agent in the system prompt
+name: rollout-errors
+area: resilience
+category: misconfiguration
+summary: >
+  Pods do not shut down gracefully, so a normal rollout or pod replacement drops
+  requests.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: medium
+signals: >
+  No preStop hook, a short terminationGracePeriodSeconds, no readinessProbe, or an
+  application that exits immediately on SIGTERM.
+proof: >
+  On a workload with 2 or more replicas, run steady k6 traffic on the journeys that use
+  it. Delete its pods one at a time, waiting for each replacement to be Ready, and
+  measure errors. Do not use kubectl rollout restart: it changes the pod template, a
+  permanent configuration change.
+confirmed_when: Journeys see errors while pods terminate and are replaced.
+survived_when: No errors during the replacement.
+remediation: >
+  Handle SIGTERM by finishing in-flight requests, add a short preStop sleep so endpoints
+  update first, and use maxUnavailable 0 with a readinessProbe.

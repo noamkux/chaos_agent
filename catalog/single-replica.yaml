@@ -1,0 +1,21 @@
+# Index: shown to the agent in the system prompt
+name: single-replica
+area: resilience
+category: single-point-of-failure
+summary: The workload runs one replica, so losing that pod makes it unavailable.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: medium
+signals: spec.replicas is 1.
+proof: >
+  Run steady k6 traffic on the user journeys. Kill the only pod and keep measuring until
+  the replacement is Ready.
+confirmed_when: A user journey fails or breaks its SLO while the pod is down.
+survived_when: >
+  Every journey keeps working: no journey needs the workload, or callers degrade
+  gracefully.
+remediation: >
+  Run at least 2 replicas with a PodDisruptionBudget (minAvailable 1), spread across
+  zones.

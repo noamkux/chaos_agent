@@ -1,0 +1,20 @@
+# Index: shown to the agent in the system prompt
+name: oom-under-load
+area: performance
+category: excessive-load
+summary: The container is killed for exceeding its memory limit under load.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: high
+signals: >
+  A memory limit close to the steady usage, or past restarts with reason OOMKilled.
+proof: >
+  Ramp k6 load in steps up to the profile's peak, within the Rules of Engagement RPS
+  cap. Watch the container's memory, restart count and last termination reason.
+confirmed_when: The container is OOMKilled during the test.
+survived_when: No OOM kills up to the tested load.
+remediation: >
+  Raise the memory limit based on usage at peak, and look for leaks if usage keeps
+  growing.

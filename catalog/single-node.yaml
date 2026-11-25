@@ -1,0 +1,26 @@
+# Index: shown to the agent in the system prompt
+name: single-node
+area: resilience
+category: single-point-of-failure
+summary: >
+  All replicas run on one node, so losing that node takes the workload down even with
+  several replicas.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: high
+signals: >
+  Every pod of the workload is on the same node, often because of a nodeSelector, a node
+  affinity on kubernetes.io/hostname, or no anti-affinity on a small cluster.
+proof: >
+  Requires Rules of Engagement that allow node drains. Run steady k6 traffic on the user
+  journeys. Cordon and drain the node that holds the replicas, measure until the pods
+  are Ready elsewhere or clearly stuck, then uncordon the node.
+confirmed_when: >
+  A user journey fails or breaks its SLO while the node is drained, or the pods cannot
+  be scheduled on another node.
+survived_when: The pods are rescheduled on other nodes and every journey keeps working.
+remediation: >
+  Remove the node pinning and add topologySpreadConstraints or pod anti-affinity on
+  kubernetes.io/hostname.

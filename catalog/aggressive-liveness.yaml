@@ -1,0 +1,25 @@
+# Index: shown to the agent in the system prompt
+name: aggressive-liveness
+area: resilience
+category: excessive-load
+summary: >
+  The liveness probe is too sensitive, so Kubernetes restarts pods that are only slow
+  under load.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: medium
+signals: >
+  A livenessProbe with a short timeoutSeconds or periodSeconds and failureThreshold 1,
+  or a liveness check that depends on other services.
+proof: >
+  Ramp k6 load in steps, within the Rules of Engagement RPS cap. Watch the container's
+  restart count and the Unhealthy events with 'Liveness probe failed'.
+confirmed_when: >
+  The container is restarted by its liveness probe under load while it was still
+  serving, only slowly.
+survived_when: No liveness restarts up to the tested load.
+remediation: >
+  Use a startupProbe for boot, set liveness failureThreshold to 3 or more and its
+  timeout above the p99, and never check dependencies in liveness.

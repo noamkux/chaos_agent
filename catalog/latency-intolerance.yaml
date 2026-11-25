@@ -1,0 +1,24 @@
+# Index: shown to the agent in the system prompt
+name: latency-intolerance
+area: resilience
+category: excessive-latency
+summary: A slow dependency, not a failed one, makes a journey break its SLO.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: medium
+signals: >
+  Sequential calls to dependencies, retries without a budget, or timeouts close to or
+  above the SLO.
+proof: >
+  Run steady k6 traffic on the journeys. Inject added latency (for example 500ms) on
+  traffic to the dependency for a fixed window, measure the journeys' p95 and errors,
+  then remove the fault and wait for the baseline.
+confirmed_when: >
+  A journey breaks its SLO by more than the injected latency explains, or starts to
+  return errors.
+survived_when: The journey stays within its SLO, or degrades gracefully.
+remediation: >
+  Set timeouts below the SLO, call independent dependencies in parallel, cache where
+  possible, and limit retries.

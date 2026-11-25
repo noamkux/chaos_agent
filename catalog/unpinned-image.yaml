@@ -1,0 +1,19 @@
+# Index: shown to the agent in the system prompt
+name: unpinned-image
+area: resilience
+category: misconfiguration
+summary: >
+  An image uses a floating tag, so a restart or redeploy can run a different version
+  than the one tested.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: observe
+default_severity: low
+signals: >
+  An image tagged latest, with no tag, or with a floating tag such as alpine or a bare
+  major version, and no digest.
+proof: Read the image reference of every container.
+confirmed_when: A container image has no specific version tag and no digest.
+survived_when: Every image is pinned to a version tag or a digest.
+remediation: Pin every image to a version tag, and to a digest in production.

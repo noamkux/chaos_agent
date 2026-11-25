@@ -1,0 +1,29 @@
+# Index: shown to the agent in the system prompt
+name: non-graceful-degradation
+area: resilience
+category: shared-fate
+summary: >
+  The failure of a dependency that a journey does not need breaks that journey, instead
+  of only disabling a feature.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: high
+signals: >
+  A caller that renders or serves a journey also calls optional dependencies
+  (recommendations, ads, counters, currency) with no fallback. The profile lists which
+  dependencies are optional.
+proof: >
+  Run steady k6 traffic on every journey. Scale the dependency to 0, measure every
+  journey, then restore the original replica count and wait for the baseline. Report the
+  caller as the component and the failed service as the dependency.
+confirmed_when: >
+  A journey that does not need the dependency fails or breaks its SLO while the
+  dependency is down.
+survived_when: >
+  Only journeys that truly need the dependency fail; the others keep working, possibly
+  without the feature.
+remediation: >
+  Give the caller a timeout and a fallback for the dependency (a default value or hiding
+  the feature), and consider a circuit breaker.

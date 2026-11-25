@@ -1,0 +1,22 @@
+# Index: shown to the agent in the system prompt
+name: missing-readiness
+area: resilience
+category: single-point-of-failure
+summary: >
+  A container has no readiness probe, so traffic reaches new pods before they can serve
+  it.
+applies_to: [Deployment, StatefulSet]
+
+# Details: returned only by get_check
+max_level: disrupt
+default_severity: medium
+signals: A container that serves traffic has no readinessProbe.
+proof: >
+  On a workload with 2 or more replicas, run steady k6 traffic on the journeys that use
+  it. Kill one pod and measure errors while the replacement starts.
+confirmed_when: >
+  Journeys see errors while the new pod starts, before it can serve requests.
+survived_when: No errors while the replacement starts.
+remediation: >
+  Add a readinessProbe that checks the service's own ability to serve, not its
+  dependencies.
