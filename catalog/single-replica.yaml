@@ -4,9 +4,9 @@ area: resilience
 category: single-point-of-failure
 summary: The workload runs one replica, so losing that pod makes it unavailable.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: medium
 signals: spec.replicas is 1.
 proof: >

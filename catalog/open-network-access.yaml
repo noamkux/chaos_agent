@@ -6,9 +6,9 @@ summary: >
   An internal component can be reached from anywhere in the cluster without
   authentication.
 applies_to: [Service]
+max_level: probe
 
 # Details: returned only by get_check
-max_level: probe
 default_severity: high
 signals: >
   No NetworkPolicy selects the component's pods, and the component (often a data store)

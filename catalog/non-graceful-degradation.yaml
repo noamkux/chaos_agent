@@ -6,9 +6,9 @@ summary: >
   The failure of a dependency that a journey does not need breaks that journey, instead
   of only disabling a feature.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: high
 signals: >
   A caller that renders or serves a journey also calls optional dependencies

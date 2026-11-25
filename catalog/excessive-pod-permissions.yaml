@@ -5,9 +5,9 @@ category: misconfiguration
 summary: >
   The pod's ServiceAccount holds permissions far beyond what the application needs.
 applies_to: [Deployment, StatefulSet]
+max_level: observe
 
 # Details: returned only by get_check
-max_level: observe
 default_severity: high
 signals: >
   A mounted ServiceAccount token bound to broad roles: cluster-admin, wildcard verbs or

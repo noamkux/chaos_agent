@@ -6,9 +6,9 @@ summary: >
   All replicas run in one zone, so a zone outage takes the workload down even with
   several replicas.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: high
 signals: >
   Every pod of the workload is on nodes with the same topology.kubernetes.io/zone label,

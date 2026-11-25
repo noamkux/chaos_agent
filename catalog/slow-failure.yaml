@@ -5,9 +5,9 @@ category: excessive-latency
 summary: >
   When a dependency is gone, requests block for a long time instead of failing fast.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: high
 signals: >
   Callers with no client timeout or deadline, or long defaults, on calls to a

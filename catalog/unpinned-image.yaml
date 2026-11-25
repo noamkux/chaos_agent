@@ -6,9 +6,9 @@ summary: >
   An image uses a floating tag, so a restart or redeploy can run a different version
   than the one tested.
 applies_to: [Deployment, StatefulSet]
+max_level: observe
 
 # Details: returned only by get_check
-max_level: observe
 default_severity: low
 signals: >
   An image tagged latest, with no tag, or with a floating tag such as alpine or a bare

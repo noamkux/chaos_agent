@@ -6,9 +6,9 @@ summary: >
   Pods do not shut down gracefully, so a normal rollout or pod replacement drops
   requests.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: medium
 signals: >
   No preStop hook, a short terminationGracePeriodSeconds, no readinessProbe, or an

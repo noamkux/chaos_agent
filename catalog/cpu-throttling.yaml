@@ -6,9 +6,9 @@ summary: >
   A CPU limit below what the workload needs under load throttles it, and latency rises
   while the node still has free CPU.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: medium
 signals: >
   A CPU limit close to or below the steady usage, or

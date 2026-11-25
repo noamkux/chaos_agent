@@ -6,9 +6,9 @@ summary: >
   All replicas run on one node, so losing that node takes the workload down even with
   several replicas.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: high
 signals: >
   Every pod of the workload is on the same node, often because of a nodeSelector, a node

@@ -25,12 +25,12 @@ Each file has two parts. The index part is short and goes into the system prompt
 - **`name`** (string, required): the identifier of the check, lowercase with hyphens. Must match the file name. Used as `check_name` in findings, in `ground_truth.yaml` and in `focus.checks`.
 - **`area`** (required): `resilience`, `performance` or `exposure`. Used by `focus.areas` and to split the report into sections.
 - **`category`** (required): the failure category, from the AWS Resilience Analysis Framework: `single-point-of-failure`, `excessive-load`, `excessive-latency`, `misconfiguration` or `shared-fate`. Used to track coverage and to guide the agent beyond the catalog.
-- **`summary`** (string, required): one sentence on what the weakness is and why it hurts. It is all the agent sees about the check in the index.
+- **`summary`** (string, required): one sentence on what the weakness is and why it hurts. It is the only description of the check the agent sees in the index.
 - **`applies_to`** (list, required): Kubernetes resource kinds the check is relevant to, for example `[Deployment, StatefulSet]`. Checks with no matching resource in the system are left out of the index.
+- **`max_level`** (required): the highest action level that may be used to prove the check: `observe`, `probe` or `disrupt`. A safety rule, not a capability: some checks could be proven by disruption but must not be, because the proof would destroy data. It is in the index so the agent knows which checks it can prove in a run before reading their details.
 
 ### Details
 
-- **`max_level`** (required): the highest action level that may be used to prove the check: `observe`, `probe` or `disrupt`. A safety rule, not a capability: some checks could be proven by disruption but must not be, because the proof would destroy data.
 - **`default_severity`** (required): `high`, `medium` or `low`. The agent may change it with a stated reason.
 - **`signals`** (string, required): what in the configuration or behavior raises suspicion.
 - **`proof`** (string, required): the experiment or observation that proves or refutes the check, within `max_level`.
@@ -51,8 +51,8 @@ Each file has two parts. The index part is short and goes into the system prompt
     category: single-point-of-failure
     summary: The workload runs one replica, so losing that pod makes it unavailable.
     applies_to: [Deployment, StatefulSet]
-
     max_level: disrupt
+
     default_severity: medium
     signals: spec.replicas is 1.
     proof: >

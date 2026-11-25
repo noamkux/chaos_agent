@@ -41,6 +41,7 @@ The agent never touches the cluster directly. It acts only through tools exposed
 - **One codebase, one pod per level:** the same image is deployed three times with `LEVEL=observe`, `probe` or `disrupt`. Each pod registers only the tools of its level (`TOOLS_BY_LEVEL` in `server.py`) and runs with the ServiceAccount of its level, so a read-only pod never holds permissions to disrupt.
 - **The server does not trust the client:** every tool checks the namespace against `ALLOWED_NAMESPACES`, set at install time. Expected errors are raised as `ToolError`, so the reason reaches the agent; any other exception is hidden from the client and logged on the server.
 - **Small outputs:** tools return only the fields the checks need (`get_workloads` returns 12 fields per workload instead of the full object), to save tokens and keep secrets out of the agent's context.
+- **`get_inventory`:** returns only the names of the Deployments, StatefulSets, Services and Ingresses in a namespace: the kinds the catalog applies to.
 
 ## Tool gating and audit (`orchestrator/tools.py`)
 
@@ -68,9 +69,12 @@ A harness written from scratch on the Claude API with native tool calling, witho
 The catalog defines the types of weakness the agent tests for, and how each may be proven. It does not teach the model what it already knows; it gives every run the same names, the same proof rules and the same definition of a finding.
 
 - **One file per check** in `catalog/`, reviewed by PR.
-- **Two parts per check:** an index (name, area, failure category, one-line summary, resource types it applies to) that goes into the system prompt, and details (maximum proof level, signals, proof, when it is confirmed, when the system survived, default severity, remediation) returned only by a `get_check` tool. This keeps a large catalog cheap in tokens.
+- **Two parts per check:** an index (name, area, failure category, one-line summary, resource types it applies to, maximum proof level) that goes into the system prompt, and details (signals, proof, when it is confirmed, when the system survived, default severity, remediation) returned only by a `get_check` tool. This keeps a large catalog cheap in tokens.
 - **Failure categories** follow the AWS Resilience Analysis Framework: single point of failure, excessive load, excessive latency, misconfiguration, shared fate.
 - **Filtering in code:** only checks that apply to resources present in the system, and to the run's `focus`, enter the index.
+- **Discovery:** before the first LLM call, the orchestrator calls the observe tool `get_inventory` through the same gated and audited path as any tool call, and selects the checks whose `applies_to` matches the kinds found. If discovery fails, the run fails, so a run never silently tests nothing.
+- **Run level in the prompt:** the index shows each check's `max_level`, and the prompt states the run's level, so the agent proves each check only up to the lower of the two and reports the rest as not proven.
+- **`get_check`:** an internal orchestrator tool, answered from the checks selected for the run, so a check left out by `focus` cannot be read. Every call is recorded in `steps`.
 - **A finding is about user impact:** a weakness is confirmed when a user journey fails or breaks its SLO, measured at the system boundary, not when a pod is down.
 - **Deterministic detection:** configuration issues will come from kube-score as an observe tool, so they are found completely in every run.
 - **Structured findings:** the agent will report through a `report_finding` tool that accepts only catalog names, so findings can be matched to `ground_truth.yaml`.

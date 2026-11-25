@@ -4,9 +4,9 @@ area: resilience
 category: excessive-latency
 summary: After a pod is lost, the system takes too long to return to its steady state.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: medium
 signals: >
   Long startup (large images, heavy runtimes, migrations at start), no startupProbe, or

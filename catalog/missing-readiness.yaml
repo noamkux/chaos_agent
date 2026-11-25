@@ -6,9 +6,9 @@ summary: >
   A container has no readiness probe, so traffic reaches new pods before they can serve
   it.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: medium
 signals: A container that serves traffic has no readinessProbe.
 proof: >

@@ -6,9 +6,9 @@ summary: >
   The liveness probe is too sensitive, so Kubernetes restarts pods that are only slow
   under load.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: medium
 signals: >
   A livenessProbe with a short timeoutSeconds or periodSeconds and failureThreshold 1,

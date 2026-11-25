@@ -9,7 +9,8 @@ except config.ConfigException:
     config.load_kube_config()
 
 apps = client.AppsV1Api()
-
+core = client.CoreV1Api()
+networking = client.NetworkingV1Api()
 
 def get_workloads(namespace: str) -> list[dict]:
     """List Deployments and StatefulSets in a namespace with their resilience-relevant settings."""
@@ -17,7 +18,6 @@ def get_workloads(namespace: str) -> list[dict]:
     workloads = [summarize(d, "Deployment") for d in apps.list_namespaced_deployment(namespace).items]
     workloads += [summarize(s, "StatefulSet") for s in apps.list_namespaced_stateful_set(namespace).items]
     return workloads
-
 
 def summarize(workload, kind):
     """Keep only the settings that resilience checks look at."""
@@ -38,3 +38,20 @@ def summarize(workload, kind):
         "empty_dir_volumes": [v.name for v in pod.volumes or [] if v.empty_dir is not None],
     }
 
+def get_inventory(namespace: str) -> dict[str, list[str]]:
+    """List the names of the Deployments, StatefulSets, Services and Ingresses in a namespace.
+
+    Only these four kinds are listed. An empty list means none of that kind exists;
+    any other kind (PodDisruptionBudget, NetworkPolicy, ...) is not covered by this tool.
+    """
+    check_scope(namespace)
+    return {
+        "Deployment": names(apps.list_namespaced_deployment(namespace)),
+        "StatefulSet": names(apps.list_namespaced_stateful_set(namespace)),
+        "Service": names(core.list_namespaced_service(namespace)),
+        "Ingress": names(networking.list_namespaced_ingress(namespace)),
+    }
+
+def names(resource_list):
+    """Sorted names from a Kubernetes list response."""
+    return sorted(item.metadata.name for item in resource_list.items)

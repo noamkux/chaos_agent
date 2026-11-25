@@ -4,9 +4,9 @@ area: performance
 category: excessive-load
 summary: The container is killed for exceeding its memory limit under load.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: high
 signals: >
   A memory limit close to the steady usage, or past restarts with reason OOMKilled.

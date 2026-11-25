@@ -6,9 +6,9 @@ summary: >
   A component that holds user data stores it on an emptyDir volume or the container
   filesystem, so a pod restart deletes it.
 applies_to: [Deployment, StatefulSet]
+max_level: observe
 
 # Details: returned only by get_check
-max_level: observe
 default_severity: high
 signals: >
   A data store (Redis, a database, a queue) whose data directory is on an emptyDir

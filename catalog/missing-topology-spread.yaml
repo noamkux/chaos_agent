@@ -6,9 +6,9 @@ summary: >
   A workload with several replicas has no spread rules, so its current placement across
   nodes and zones is accidental.
 applies_to: [Deployment, StatefulSet]
+max_level: observe
 
 # Details: returned only by get_check
-max_level: observe
 default_severity: low
 signals: >
   A workload with 2 or more replicas and no topologySpreadConstraints or pod anti-

@@ -6,9 +6,9 @@ summary: >
   An internal endpoint (metrics, debug, admin) is reachable through the user-facing
   entrypoint.
 applies_to: [Service, Ingress]
+max_level: probe
 
 # Details: returned only by get_check
-max_level: probe
 default_severity: medium
 signals: >
   Metrics, profiling, health details or admin routes served on the same port as user

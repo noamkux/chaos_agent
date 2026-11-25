@@ -6,8 +6,8 @@ import db
 
 MODEL = "claude-haiku-5-5"
 ROE = {"scope": {"namespaces": ["boutique"]}}
-TASK = ("Map the workloads in namespace 'boutique' and list the resilience risks "
-        "you can see from their configuration.")
+TASK = ("Test the resilience of namespace 'boutique'. Work through every check in the catalog "
+        "that applies to it, within this run's level, and report the result of each check.")
 
 
 async def main():

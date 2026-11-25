@@ -9,9 +9,10 @@ LEVEL = os.environ["LEVEL"]
 
 # The only place in this server that decides which tool belongs to which level.
 TOOLS_BY_LEVEL = {
-    "observe": [k8s.get_workloads],
+    "observe": [k8s.get_workloads, k8s.get_inventory],
     "probe": [],
     "disrupt": [],
+    
 }
 
 mcp = MCPServer(f"chaos-agent-{LEVEL}")

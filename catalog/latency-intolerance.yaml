@@ -4,9 +4,9 @@ area: resilience
 category: excessive-latency
 summary: A slow dependency, not a failed one, makes a journey break its SLO.
 applies_to: [Deployment, StatefulSet]
+max_level: disrupt
 
 # Details: returned only by get_check
-max_level: disrupt
 default_severity: medium
 signals: >
   Sequential calls to dependencies, retries without a budget, or timeouts close to or

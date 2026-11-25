@@ -5,8 +5,8 @@ import yaml
 
 CATALOG_DIR = Path(__file__).parent.parent / "catalog"
 
-INDEX_FIELDS = ["name", "area", "category", "summary", "applies_to"]
-DETAIL_FIELDS = ["max_level", "default_severity", "signals", "proof",
+INDEX_FIELDS = ["name", "area", "category", "summary", "applies_to", "max_level"]
+DETAIL_FIELDS = ["default_severity", "signals", "proof",
                  "confirmed_when", "survived_when", "remediation"]
 
 PROMPT_HEADER = """## Checks catalog
@@ -14,13 +14,14 @@ PROMPT_HEADER = """## Checks catalog
 These are known weaknesses. When a check applies to this system, you must test it.
 The catalog is a floor, not a limit: also look for weaknesses outside it, using the
 failure categories below, and report those as observations.
-Before you test a check, call get_check(name) to read how to prove it and the highest
-level you may use. Report every result, confirmed or survived, with report_finding.
+Each check shows the highest level that may be used to prove it (max_level).
+Before you test a check, call get_check(name) to read how to prove it.
+Report every result, confirmed or survived, with report_finding.
 
 Failure categories: single-point-of-failure, excessive-load, excessive-latency,
 misconfiguration, shared-fate.
 
-Checks that apply to this system (name | category | summary):
+Checks that apply to this system (name | category | max_level | summary):
 """
 
 
@@ -55,7 +56,7 @@ def select_checks(checks, present_kinds, focus=None):
 
 def render_index(selected):
     """Build the catalog section of the system prompt, sorted by name so it is identical across runs."""
-    lines = [f"- {name} | {check['category']} | {check['summary'].strip()}"
+    lines = [f"- {name} | {check['category']} | {check['max_level']} | {check['summary'].strip()}"
              for name, check in sorted(selected.items())]
     return PROMPT_HEADER + "\n".join(lines) + "\n"
 
@@ -63,7 +64,7 @@ def render_index(selected):
 GET_CHECK_TOOL = {
     "name": "get_check",
     "description": ("Return the details of one check from the catalog: how to prove it, "
-                    "when it counts as confirmed or survived, the highest level allowed, and the fix."),
+                    "when it counts as confirmed or survived, and the fix."),
     "input_schema": {
         "type": "object",
         "properties": {
