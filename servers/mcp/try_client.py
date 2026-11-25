@@ -1,13 +1,15 @@
-"""Manual check of the cluster server."""
+"""Manual check of the observe server: tool list, a call in scope, and a call out of scope."""
 import asyncio
 
 from mcp import Client
 
 
 async def main():
-    async with Client("http://127.0.0.1:8080/mcp") as client:
+    async with Client("http://127.0.0.1:8081/mcp") as client:
         tools = await client.list_tools()
         print("tools:", [t.name for t in tools.tools])
+        if not tools.tools:
+            return
 
         result = await client.call_tool("get_workloads", {"namespace": "boutique"})
         for w in result.structured_content["result"]:

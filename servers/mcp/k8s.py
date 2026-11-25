@@ -1,10 +1,7 @@
-"""MCP server 'cluster': read-only view of workloads in allowed namespaces."""
-import os
-
+"""Kubernetes tools."""
 from kubernetes import client, config
-from mcp.server import MCPServer
 
-ALLOWED_NAMESPACES = set(os.environ["ALLOWED_NAMESPACES"].split(","))
+from scope import check_scope
 
 try:
     config.load_incluster_config()
@@ -12,13 +9,14 @@ except config.ConfigException:
     config.load_kube_config()
 
 apps = client.AppsV1Api()
-mcp = MCPServer("cluster")
 
 
-def check_scope(namespace):
-    """Reject any namespace this server was not deployed to read."""
-    if namespace not in ALLOWED_NAMESPACES:
-        raise ValueError(f"namespace '{namespace}' is out of scope")
+def get_workloads(namespace: str) -> list[dict]:
+    """List Deployments and StatefulSets in a namespace with their resilience-relevant settings."""
+    check_scope(namespace)
+    workloads = [summarize(d, "Deployment") for d in apps.list_namespaced_deployment(namespace).items]
+    workloads += [summarize(s, "StatefulSet") for s in apps.list_namespaced_stateful_set(namespace).items]
+    return workloads
 
 
 def summarize(workload, kind):
@@ -40,19 +38,3 @@ def summarize(workload, kind):
         "empty_dir_volumes": [v.name for v in pod.volumes or [] if v.empty_dir is not None],
     }
 
-
-@mcp.tool()
-def get_workloads(namespace: str) -> list[dict]:
-    """List Deployments and StatefulSets in a namespace with their resilience-relevant settings."""
-    check_scope(namespace)
-    workloads = [summarize(d, "Deployment") for d in apps.list_namespaced_deployment(namespace).items]
-    workloads += [summarize(s, "StatefulSet") for s in apps.list_namespaced_stateful_set(namespace).items]
-    return workloads
-
-
-if __name__ == "__main__":
-    mcp.run(
-        transport="streamable-http",
-        host=os.environ.get("HOST", "127.0.0.1"),
-        port=int(os.environ.get("PORT", "8080")),
-    )
