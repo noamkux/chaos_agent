@@ -60,7 +60,7 @@ def select_checks(checks, present_kinds, focus=None):
 
     Args:
         checks: all checks, from load_catalog.
-        present_kinds: the kinds found by discovery, for example {"Deployment", "Service"}.
+        present_kinds: the kinds found by discovery, for example {"apps/Deployment", "core/Service"}.
         focus: optional dict; its checks and areas only narrow the selection, never widen it.
 
     Returns:

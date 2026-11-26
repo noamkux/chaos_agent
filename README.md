@@ -41,7 +41,7 @@ The lab is a local cluster that simulates a customer environment. `lab/up.sh` br
 - `runs`: one row per run; also the queue and the per-namespace lock.
 - `steps`: every LLM call and tool call; the audit log and the checkpoint.
 - `undo_actions`: the inverse of every disruptive action, written before the action runs.
-- `findings`: what the agent found, confirmed or survived.
+- `findings`: one result per check and component: confirmed, survived, not proven or inconclusive.
 
 **Orchestrator (`orchestrator/`):** connects to Postgres with the standard `PG*` environment variables, applies the schema on every start, and manages the run lifecycle (create, claim, finish). A partial unique index allows only one running run per namespace, enforced by Postgres; this was tested with two runs on the same namespace.
 
@@ -87,8 +87,18 @@ The catalog defines the types of weakness the agent tests for, and how each may 
 - **Run level in the prompt:** the index shows each check's `max_level`, and the prompt states the run's level, so the agent proves each check only up to the lower of the two and reports the rest as not proven.
 - **`get_check`:** an internal orchestrator tool, answered from the checks selected for the run, so a check left out by `focus` cannot be read. Every call is recorded in `steps`.
 - **A finding is about user impact:** a weakness is confirmed when a user journey fails or breaks its SLO, measured at the system boundary, not when a pod is down.
-- **Deterministic detection:** configuration issues will come from kube-score as an observe tool, so they are found completely in every run.
-- **Structured findings:** the agent will report through a `report_finding` tool that accepts only catalog names, so findings can be matched to `ground_truth.yaml`.
+- **Structured findings:** every result is reported through `report_finding` (see below), so findings can be matched to `ground_truth.yaml`.
+
+## Findings (`orchestrator/findings.py`)
+
+The agent reports every result through `report_finding`, an internal orchestrator tool. The report and the eval read the `findings` table, not the model's text.
+
+- **Four statuses:** `confirmed`, `survived`, `not_proven` (the check needs a higher level than the run allows) and `inconclusive` (tested, but the information needed is missing).
+- **Strict tool with enums:** `check_name` is an enum of the run's checks plus `other`, and `component` an enum of the objects found by discovery, so the model cannot invent a name. Above 300 object names, `component` and `dependency` are sent without an enum, because a very large enum makes the schema too complex for the API and the run would fail on its first call; validation still checks every name against the full inventory.
+- **Validated before it is stored:** the status must match the run's level (a check above it can only be `not_proven` or `inconclusive`, a check within it cannot be `not_proven`), the evidence must cite step numbers of successful MCP tool results from this run, and a changed severity needs a reason.
+- **Step numbers:** every MCP tool result shows its step number, which the agent cites as evidence. The discovery steps and the inventory are in the prompt, so a missing kind can be cited too.
+- **Rejected reports** go back to the model with the reason, and are recorded in `steps` with `allowed = false`.
+- **One finding per check, component and dependency in a run:** a later report replaces the earlier one, so a result can move from `not_proven` to `confirmed` after an experiment.
 
 ## Backlog
 

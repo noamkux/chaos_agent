@@ -22,7 +22,7 @@ async def main():
         print(await tools.call_tool(conn, run_id, allowed, scope, "disrupt__scale_deployment", {"namespace": "boutique"}))
 
         rows = conn.execute(
-            "SELECT seq, name, allowed, output IS NOT NULL FROM steps WHERE run_id = %s ORDER BY seq",
+            "SELECT step, name, allowed, output IS NOT NULL FROM steps WHERE run_id = %s ORDER BY step",
             (run_id,),
         )
         for row in rows:

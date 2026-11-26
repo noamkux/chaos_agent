@@ -70,7 +70,8 @@ async def call_tool(conn, run_id, allowed_tools, scope, name, args):
         args: the tool's arguments; from the model, so untrusted.
 
     Returns:
-        JSON text {"is_error", "content"} for the agent, or "DENIED: <reason>".
+        JSON text {"step", "is_error", "content"} for the agent, where step is the step number
+        the agent cites as evidence; or "DENIED: <reason>".
     """
     denied = None
     if name not in allowed_tools:
@@ -78,7 +79,7 @@ async def call_tool(conn, run_id, allowed_tools, scope, name, args):
     elif "namespace" in args and args["namespace"] not in scope:
         denied = f"namespace '{args['namespace']}' is out of scope"
 
-    step_id = db.start_step(conn, run_id, name, args, allowed=denied is None)
+    step_id, step = db.start_step(conn, run_id, name, args, allowed=denied is None)
 
     if denied:
         db.finish_step(conn, step_id, {"denied": denied})
@@ -90,4 +91,4 @@ async def call_tool(conn, run_id, allowed_tools, scope, name, args):
 
     output = {"is_error": result.is_error, "content": result_content(result)}
     db.finish_step(conn, step_id, output)
-    return json.dumps(output)
+    return json.dumps({"step": step, **output})

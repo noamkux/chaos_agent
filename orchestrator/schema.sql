@@ -22,7 +22,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_running_run_per_namespace
 CREATE TABLE IF NOT EXISTS steps (
     id           bigint       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     run_id       bigint       NOT NULL REFERENCES runs (id),
-    seq          int          NOT NULL,
+    step         int          NOT NULL,
     kind         text         NOT NULL CHECK (kind IN ('llm', 'tool')),
     name         text         NOT NULL,
     input        jsonb,
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS steps (
     cost_usd     numeric(8,4),
     started_at   timestamptz  NOT NULL DEFAULT now(),
     finished_at  timestamptz,
-    UNIQUE (run_id, seq)
+    UNIQUE (run_id, step)
 );
 
 CREATE TABLE IF NOT EXISTS undo_actions (
@@ -48,16 +48,23 @@ CREATE TABLE IF NOT EXISTS undo_actions (
 );
 
 CREATE TABLE IF NOT EXISTS findings (
-    id              bigint       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    run_id          bigint       NOT NULL REFERENCES runs (id),
-    check_name      text         NOT NULL,
-    component       text         NOT NULL,
+    id               bigint       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id           bigint       NOT NULL REFERENCES runs (id),
+    check_name       text         NOT NULL,
+    component        text         NOT NULL,
     /* dependency for checks that the target are diffrent service that depends on each other*/
-    dependency      text,
-    status          text         NOT NULL CHECK (status IN ('confirmed', 'survived')),
-    severity        text         NOT NULL CHECK (severity IN ('high', 'medium', 'low')),
-    title           text         NOT NULL,
-    evidence        jsonb        NOT NULL,
-    recommendation  text,
-    created_at      timestamptz  NOT NULL DEFAULT now()
+    dependency       text,
+    status           text         NOT NULL
+                     CHECK (status IN ('confirmed', 'survived', 'not_proven', 'inconclusive')),
+    category         text         NOT NULL
+                     CHECK (category IN ('single-point-of-failure', 'excessive-load',
+                                         'excessive-latency', 'misconfiguration', 'shared-fate')),
+    severity         text         NOT NULL CHECK (severity IN ('high', 'medium', 'low')),
+    severity_reason  text,
+    title            text         NOT NULL,
+    evidence         jsonb        NOT NULL,
+    recommendation   text,
+    created_at       timestamptz  NOT NULL DEFAULT now(),
+    updated_at       timestamptz  NOT NULL DEFAULT now(),
+    UNIQUE NULLS NOT DISTINCT (run_id, check_name, component, dependency)
 );

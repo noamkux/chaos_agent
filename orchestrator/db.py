@@ -107,18 +107,18 @@ def start_step(conn, run_id, name, args, allowed):
         allowed: whether the orchestrator approved the call; denied calls are recorded too.
 
     Returns:
-        The step's id (not its seq), passed to finish_step.
+        A tuple: the step's id, passed to finish_step, and its step number, shown to the model.
     """
     row = conn.execute(
         """
-        INSERT INTO steps (run_id, seq, kind, name, input, allowed)
-        VALUES (%s, (SELECT coalesce(max(seq), 0) + 1 FROM steps WHERE run_id = %s), 'tool', %s, %s, %s)
-        RETURNING id
+        INSERT INTO steps (run_id, step, kind, name, input, allowed)
+        VALUES (%s, (SELECT coalesce(max(step), 0) + 1 FROM steps WHERE run_id = %s), 'tool', %s, %s, %s)
+        RETURNING id, step
         """,
         (run_id, run_id, name, Jsonb(args), allowed),
     ).fetchone()
     conn.commit()
-    return row[0]
+    return row[0], row[1]
 
 
 def finish_step(conn, step_id, output):
@@ -137,6 +137,7 @@ def finish_step(conn, step_id, output):
 
 
 def record_llm_step(conn, run_id, model, output, tokens_in, tokens_out):
+
     """Record one LLM call: the model's response and its token usage.
 
     Args:
@@ -149,9 +150,70 @@ def record_llm_step(conn, run_id, model, output, tokens_in, tokens_out):
     """
     conn.execute(
         """
-        INSERT INTO steps (run_id, seq, kind, name, output, allowed, tokens_in, tokens_out, finished_at)
-        VALUES (%s, (SELECT coalesce(max(seq), 0) + 1 FROM steps WHERE run_id = %s), 'llm', %s, %s, true, %s, %s, now())
+        INSERT INTO steps (run_id, step, kind, name, output, allowed, tokens_in, tokens_out, finished_at)
+        VALUES (%s, (SELECT coalesce(max(step), 0) + 1 FROM steps WHERE run_id = %s), 'llm', %s, %s, true, %s, %s, now())
         """,
         (run_id, run_id, model, Jsonb(output), tokens_in, tokens_out),
     )
     conn.commit()
+
+
+# --------- Findings ----------------
+
+def record_finding(conn, run_id, finding):
+    """Insert a finding, or replace the run's earlier one for the same check, component and dependency.
+
+    Args:
+        conn: open connection from connect().
+        run_id: the run's id, from create_run.
+        finding: a validated finding with check_name, component, dependency, status, category,
+            severity, severity_reason, title, evidence and recommendation.
+
+    Returns:
+        A tuple: the finding's id, and True if it replaced an earlier finding.
+    """
+    row = conn.execute(
+        """
+        INSERT INTO findings (run_id, check_name, component, dependency, status, category,
+                              severity, severity_reason, title, evidence, recommendation)
+        VALUES (%(run_id)s, %(check_name)s, %(component)s, %(dependency)s, %(status)s,
+                %(category)s, %(severity)s, %(severity_reason)s, %(title)s, %(evidence)s,
+                %(recommendation)s)
+        ON CONFLICT (run_id, check_name, component, dependency) DO UPDATE SET
+            status = EXCLUDED.status,
+            category = EXCLUDED.category,
+            severity = EXCLUDED.severity,
+            severity_reason = EXCLUDED.severity_reason,
+            title = EXCLUDED.title,
+            evidence = EXCLUDED.evidence,
+            recommendation = EXCLUDED.recommendation,
+            updated_at = now()
+        RETURNING id, updated_at > created_at
+        """,
+        {**finding, "run_id": run_id, "evidence": Jsonb(finding["evidence"])},
+    ).fetchone()
+    conn.commit()
+    return row[0], row[1]
+
+def evidence_steps(conn, run_id, steps):
+    """Which of the given step numbers can be cited as evidence in this run.
+
+    Args:
+        conn: open connection from connect().
+        run_id: the run's id, from create_run.
+        steps: the step numbers the model cited.
+
+    Returns:
+        The subset of steps that are allowed, finished, successful calls to an MCP server tool.
+    """
+    rows = conn.execute(
+        """
+        SELECT step FROM steps
+        WHERE run_id = %s AND step = ANY(%s)
+          AND kind = 'tool' AND allowed AND output IS NOT NULL
+          AND name LIKE '%%\\_\\_%%'
+          AND NOT (output->>'is_error')::boolean
+        """,
+        (run_id, list(steps)),
+    ).fetchall()
+    return {row[0] for row in rows}

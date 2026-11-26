@@ -54,7 +54,7 @@ One row per LLM call or tool call, in order. It is both the audit log and the ch
 
 - **id**: step identifier, referenced by `undo_actions`.
 - **run_id**: the run this step belongs to. A foreign key, so no orphan steps.
-- **seq**: order within the run, unique per run. Order cannot come from timestamps, because read tools run in parallel.
+- **step**: order within the run, unique per run. Order cannot come from timestamps, because read tools run in parallel.
 - **kind**: `llm` or `tool`.
 - **name**: the tool with its server (`chaos.scale_deployment`) or the model name.
 - **input, output**: what was sent and what came back. Output is stored after secret redaction; the eval searches it for the canary.
@@ -75,14 +75,16 @@ The inverse of every disruptive action, written before the action runs. `steps` 
 
 ### findings
 
-What the agent found, confirmed or survived. Written by the orchestrator only after validation (the check exists in the catalog, the component exists, evidence is present).
+One result per check, component and dependency in a run. Written by the orchestrator only after validation (the check exists in the catalog, the component exists, the status matches the run's level, the evidence cites real tool results). A later report for the same key replaces the earlier one.
 
 - **id**: finding identifier.
 - **run_id**: the run that produced it.
 - **check_name, component, dependency**: the key matched against `ground_truth.yaml` by the eval. `check_name` because `CHECK` is reserved in SQL.
-- **status**: `confirmed` (the weakness was proven) or `survived` (tested and the system held).
+- **status**: `confirmed` (the weakness was proven), `survived` (tested and the system held), `not_proven` (needs a higher level than the run allows) or `inconclusive` (tested, but the information needed is missing).
+- **category**: the failure category, copied from the catalog, or stated by the agent for `other`.
 - **severity**: `high`, `medium` or `low`; CI fails above a configured severity.
+- **severity_reason**: why the agent changed the catalog's default severity.
 - **title**: one-line summary for the report.
-- **evidence**: the proof (measurements, events, timestamps). Required: no evidence, no finding.
-- **recommendation**: the suggested fix.
-- **created_at**: when the finding was recorded.
+- **evidence**: the step numbers of the tool results that show the proof, and a short summary. Required: no evidence, no finding (except `inconclusive`).
+- **recommendation**: the suggested fix, copied from the catalog.
+- **created_at, updated_at**: when the finding was first recorded and last replaced.

@@ -24,7 +24,7 @@ async def main():
         print(summary)
         print()
         rows = conn.execute(
-            "SELECT seq, kind, name, allowed, tokens_in, tokens_out FROM steps WHERE run_id = %s ORDER BY seq",
+            "SELECT step, kind, name, allowed, tokens_in, tokens_out FROM steps WHERE run_id = %s ORDER BY step",
             (run_id,),
         )
         for row in rows:
