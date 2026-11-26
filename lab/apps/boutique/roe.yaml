@@ -1,0 +1,32 @@
+# Rules of Engagement: what the agent may do in a run. Written by security or operations,
+# separate from target.yaml (the application team) and from the agent's code.
+scope:
+  namespaces: [boutique]
+
+# Highest action level for runs with these rules: observe, probe or disrupt.
+max_level: disrupt
+
+# Journeys marked writes: true in target.yaml (cart, checkout) create data. Allowed in the lab only.
+allow_write_journeys: true
+
+# Draining a node evicts every pod on it, from every namespace. Allowed in the lab only.
+allow_node_actions: true
+
+# Limits per run.
+max_experiments: 15
+max_hold_s: 120
+
+# API groups the agent may never change, on top of the kinds the disrupt server always refuses.
+# Their controllers act outside the cluster or across it, where a snapshot cannot restore anything.
+# A group matches itself and its subgroups: argoproj.io also matches workflows.argoproj.io.
+# Leave this key out to get these defaults; set it to replace them.
+deny_groups:
+  - argoproj.io
+  - fluxcd.io
+  - services.k8s.aws
+  - crossplane.io
+  - upbound.io
+  - cnrm.cloud.google.com
+  - azure.com
+  - velero.io
+  - cnpg.io
