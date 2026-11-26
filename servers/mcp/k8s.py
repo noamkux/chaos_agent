@@ -21,6 +21,7 @@ CONTAINER_FIELDS = ["name", "image", "imagePullPolicy", "resources", "readinessP
                     "livenessProbe", "startupProbe", "lifecycle", "securityContext",
                     "volumeMounts"]
 
+# Pod fields passed to the agent. An allowlist, like CONTAINER_FIELDS.
 POD_FIELDS = ["serviceAccountName", "automountServiceAccountToken", "securityContext",
               "hostNetwork", "hostPID", "hostIPC", "nodeSelector", "affinity",
               "topologySpreadConstraints", "terminationGracePeriodSeconds"]
@@ -75,15 +76,22 @@ def env_facts(container):
     return {key: value for key, value in facts.items() if value}
 
 def get_workloads(namespace: str) -> list[dict]:
-    """List Deployments and StatefulSets in a namespace with their resilience-relevant settings."""
+    """List the Deployments, StatefulSets and DaemonSets in a namespace, with the facts resilience checks read from each one.
+
+    Fields use the Kubernetes names, as in the workload's YAML. A field that is not set is left
+    out: a container with no livenessProbe field has no liveness probe.
+    For a DaemonSet, replicas is the number of pods that should run, one per eligible node.
+    Environment variables show only the name and where the value comes from (literal,
+    secretKeyRef, configMapKeyRef, fieldRef, resourceFieldRef), never the value; envFrom lists
+    whole ConfigMaps or Secrets by name. Volumes show only name and type.
+    Not included at all: container command, args and ports, and the values of any variable.
+    """
+        
     check_scope(namespace)
     workloads = [summarize(d, "Deployment") for d in apps.list_namespaced_deployment(namespace).items]
     workloads += [summarize(s, "StatefulSet") for s in apps.list_namespaced_stateful_set(namespace).items]
     workloads += [summarize(d, "DaemonSet") for d in apps.list_namespaced_daemon_set(namespace).items]
     return workloads
-
-# Pod fields passed to the agent. An allowlist, like CONTAINER_FIELDS.
-
 
 def summarize(workload, kind):
     """The facts resilience checks read from a workload, in Kubernetes field names.
@@ -121,7 +129,6 @@ def summarize(workload, kind):
     }
     # Leave out empty lists and dicts; replicas 0 and false values stay, they are facts.
     return {key: value for key, value in summary.items() if value not in ([], {})}
-
 
 def get_inventory(namespace: str) -> dict[str, list[str]]:
     """List the names of the Deployments, StatefulSets, Services and Ingresses in a namespace.
