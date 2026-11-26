@@ -3,7 +3,7 @@ name: latency-intolerance
 area: resilience
 category: excessive-latency
 summary: A slow dependency, not a failed one, makes a journey break its SLO.
-applies_to: [Deployment, StatefulSet]
+applies_to: [apps/Deployment, apps/StatefulSet]
 max_level: disrupt
 
 # Details: returned only by get_check

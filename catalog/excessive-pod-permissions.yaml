@@ -4,7 +4,7 @@ area: exposure
 category: misconfiguration
 summary: >
   The pod's ServiceAccount holds permissions far beyond what the application needs.
-applies_to: [Deployment, StatefulSet, DaemonSet]
+applies_to: [apps/Deployment, apps/StatefulSet, apps/DaemonSet]
 max_level: observe
 
 # Details: returned only by get_check

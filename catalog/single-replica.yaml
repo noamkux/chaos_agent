@@ -3,7 +3,7 @@ name: single-replica
 area: resilience
 category: single-point-of-failure
 summary: The workload runs one replica, so losing that pod makes it unavailable.
-applies_to: [Deployment, StatefulSet]
+applies_to: [apps/Deployment, apps/StatefulSet]
 max_level: disrupt
 
 # Details: returned only by get_check

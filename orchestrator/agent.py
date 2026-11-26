@@ -20,12 +20,16 @@ When you have enough information, stop calling tools and write a short summary o
 RUN_SECTION = """## This run
 Highest action level allowed in this run: {max_level}.
 For each check, use at most the lower of this level and the check's max_level.
-If proving a check needs a higher level than this run allows, report what you observed and say it was not proven."""
+If proving a check needs a higher level than this run allows, report what you observed and say it was not proven.
+Kinds that discovery could not read, so nothing is known about them: {unreadable}."""
 
 CHECKS = catalog.load_catalog()
 
+# Every kind some check applies to; discovery must be able to read all of them.
+CATALOG_KINDS = {kind for check in CHECKS.values() for kind in check["applies_to"]}
+
 async def discover_kinds(conn, run_id, allowed, scope):
-    """Ask the observe server which resource kinds exist in the scope. Recorded in steps like any tool call.
+    """Ask the observe server which kinds exist in the scope. Recorded in steps like any tool call.
 
     Args:
         conn: open connection from connect().
@@ -34,22 +38,28 @@ async def discover_kinds(conn, run_id, allowed, scope):
         scope: the run's namespaces.
 
     Returns:
-        The kinds with at least one resource, for example {"Deployment", "Service"}.
+        A tuple: the kinds with at least one object, for example {"apps/Deployment", "core/Service"},
+        and a dict of the kinds that could not be read, with the reason.
 
     Raises:
-        RuntimeError: the inventory tool is not available or returned an error.
+        RuntimeError: the inventory tool is not available or returned an error, or a kind
+            that a check applies to could not be read.
     """
     if INVENTORY_TOOL not in allowed:
         raise RuntimeError(f"{INVENTORY_TOOL} is not available; cannot select checks")
-    # create a new set, no duplicate and no index
     kinds = set()
+    unreadable = {}
     for namespace in scope:
         output = json.loads(await tools.call_tool(conn, run_id, allowed, scope, INVENTORY_TOOL, {"namespace": namespace}))
         if output["is_error"]:
             raise RuntimeError(f"discovery failed in {namespace}: {output['content']}")
-        # returns {"Deployment", "Service"}
-        kinds |= {kind for kind, names in output["content"].items() if names}
-    return kinds
+        kinds |= set(output["content"]["kinds"])
+        unreadable |= output["content"]["unreadable"]
+    # A kind the catalog needs but could not be read would silently drop its checks.
+    blocking = {kind: reason for kind, reason in unreadable.items() if kind in CATALOG_KINDS}
+    if blocking:
+        raise RuntimeError(f"discovery cannot read kinds the catalog applies to: {blocking}")
+    return kinds, unreadable
 
 
 def call_get_check(conn, run_id, selected, args):
@@ -69,6 +79,17 @@ def call_get_check(conn, run_id, selected, args):
     db.finish_step(conn, step_id, output)
     return json.dumps(output)
 
+def format_unreadable(unreadable):
+    """The unreadable kinds as one line for the prompt, sorted so the prompt is stable.
+
+    Args:
+        unreadable: from discover_kinds, a dict from kind to reason.
+
+    Returns:
+        For example "metrics.k8s.io/PodMetrics (503 Service Unavailable)", or "none".
+    """
+    return ", ".join(f"{kind} ({reason})" for kind, reason in sorted(unreadable.items())) or "none"
+
 async def run_agent(conn, run_id, model, max_level, scope, task, focus=None):
     """Run the loop until the model stops calling tools or the iteration limit is reached.
 
@@ -87,10 +108,10 @@ async def run_agent(conn, run_id, model, max_level, scope, task, focus=None):
     client = AsyncAnthropic()
     available = await tools.load_tools(max_level)
     allowed = {t["name"] for t in available}
-    present_kinds = await discover_kinds(conn, run_id, allowed, scope)
+    present_kinds, unreadable = await discover_kinds(conn, run_id, allowed, scope)
     selected = catalog.select_checks(CHECKS, present_kinds, focus)
     system = (SYSTEM_PROMPT + "\n\n" + catalog.render_index(selected)
-          + "\n" + RUN_SECTION.format(max_level=max_level))
+          + "\n" + RUN_SECTION.format(max_level=max_level, unreadable=format_unreadable(unreadable)))
     available.append(catalog.GET_CHECK_TOOL)
     messages = [{"role": "user", "content": task}]
 

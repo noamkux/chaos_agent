@@ -1,5 +1,7 @@
 """Kubernetes tools."""
-from kubernetes import client, config
+from kubernetes import client, config, dynamic
+from kubernetes.client.exceptions import ApiException
+from kubernetes.dynamic.resource import ResourceList
 
 from scope import check_scope
 
@@ -7,14 +9,22 @@ try:
     config.load_incluster_config()
 except config.ConfigException:
     config.load_kube_config()
+    
 # Deployments, StatefulSets
 apps = client.AppsV1Api()
+
 # Services, Pods, Events
 core = client.CoreV1Api()
+
 # Ingress, NetworkPolicy
 networking = client.NetworkingV1Api()
+
 # Turns API objects into dicts with the Kubernetes field names, without fields that are None.
 serialize = apps.api_client.sanitize_for_serialization
+
+# Lists any kind, including CRDs, found through the API server's discovery.
+dynamic_client = dynamic.DynamicClient(apps.api_client)
+
 
 # Container fields passed to the agent. An allowlist: env is left out on purpose (see env_facts).
 CONTAINER_FIELDS = ["name", "image", "imagePullPolicy", "resources", "readinessProbe",
@@ -26,6 +36,34 @@ POD_FIELDS = ["serviceAccountName", "automountServiceAccountToken", "securityCon
               "hostNetwork", "hostPID", "hostIPC", "nodeSelector", "affinity",
               "topologySpreadConstraints", "terminationGracePeriodSeconds"]
 
+# Kinds left out of the inventory. Secrets are never read. The rest are created by
+# controllers, change all the time, and their content comes from dedicated tools.
+SKIPPED_KINDS = {
+    "core/Secret",
+    "core/Pod", "apps/ReplicaSet", "apps/ControllerRevision",
+    "core/Endpoints", "discovery.k8s.io/EndpointSlice",
+    "core/Event", "events.k8s.io/Event",
+    "coordination.k8s.io/Lease",
+}
+
+def listable_kinds():
+    """Every namespaced kind the API server can list, at its preferred version.
+
+    Returns:
+        A dict from "group/Kind" (core/Service, apps/Deployment) to its dynamic Resource,
+        without SKIPPED_KINDS.
+    """
+    dynamic_client.resources.invalidate_cache()
+    kinds = {}
+    for resource in dynamic_client.resources.search():
+        if isinstance(resource, ResourceList) or not getattr(resource, "preferred", False):
+            continue
+        if not resource.namespaced or "list" not in (resource.verbs or []):
+            continue
+        kind = f"{resource.group or 'core'}/{resource.kind}"
+        if kind not in SKIPPED_KINDS:
+            kinds[kind] = resource
+    return kinds
 
 def container_facts(container):
     """The settings resilience checks read from one container, as in the workload's YAML.
@@ -88,9 +126,9 @@ def get_workloads(namespace: str) -> list[dict]:
     """
         
     check_scope(namespace)
-    workloads = [summarize(d, "Deployment") for d in apps.list_namespaced_deployment(namespace).items]
-    workloads += [summarize(s, "StatefulSet") for s in apps.list_namespaced_stateful_set(namespace).items]
-    workloads += [summarize(d, "DaemonSet") for d in apps.list_namespaced_daemon_set(namespace).items]
+    workloads = [summarize(d, "apps/Deployment") for d in apps.list_namespaced_deployment(namespace).items]
+    workloads += [summarize(s, "apps/StatefulSet") for s in apps.list_namespaced_stateful_set(namespace).items]
+    workloads += [summarize(d, "apps/DaemonSet") for d in apps.list_namespaced_daemon_set(namespace).items]
     return workloads
 
 def summarize(workload, kind):
@@ -98,7 +136,8 @@ def summarize(workload, kind):
 
     Args:
         workload: a Deployment, StatefulSet or DaemonSet object from the Kubernetes API.
-        kind: "Deployment", "StatefulSet" or "DaemonSet"; objects in list responses do not carry their kind.
+        kind: "apps/Deployment", "apps/StatefulSet" or "apps/DaemonSet", the same names as in
+            get_inventory; objects in list responses do not carry their kind.
 
     Returns:
         A dict with the workload's replicas, pod labels, POD_FIELDS that are set, volumes
@@ -106,7 +145,7 @@ def summarize(workload, kind):
     """
     template = workload.spec.template
     pod = serialize(template.spec)
-    if kind == "DaemonSet":
+    if kind == "apps/DaemonSet":
         # One pod per eligible node: there is no spec.replicas, the controller sets the count.
         replicas = workload.status.desired_number_scheduled
         ready = workload.status.number_ready
@@ -130,24 +169,27 @@ def summarize(workload, kind):
     # Leave out empty lists and dicts; replicas 0 and false values stay, they are facts.
     return {key: value for key, value in summary.items() if value not in ([], {})}
 
-def get_inventory(namespace: str) -> dict[str, list[str]]:
-    """List the names of the Deployments, StatefulSets, Services and Ingresses in a namespace.
+def get_inventory(namespace: str) -> dict[str, dict]:
+    """List the names of every kind of object in a namespace, including custom resources (CRDs), keyed by group/Kind: core/Service, apps/Deployment, policy/PodDisruptionBudget.
 
-    Only these four kinds are listed. An empty list means none of that kind exists;
-    any other kind (PodDisruptionBudget, NetworkPolicy, ...) is not covered by this tool.
+    "kinds" has every kind with at least one object. A kind that is not in "kinds" and not in
+    "unreadable" has no objects in this namespace.
+    "unreadable" has the kinds that could not be read, with the reason; nothing is known about them.
+    Never listed, by design: core/Secret, and objects that controllers create from other
+    objects (core/Pod, apps/ReplicaSet, apps/ControllerRevision, core/Endpoints,
+    discovery.k8s.io/EndpointSlice, core/Event, events.k8s.io/Event, coordination.k8s.io/Lease).
     """
     check_scope(namespace)
-    return {
-        "Deployment": names(apps.list_namespaced_deployment(namespace)),
-        "StatefulSet": names(apps.list_namespaced_stateful_set(namespace)),
-        "Service": names(core.list_namespaced_service(namespace)),
-        "Ingress": names(networking.list_namespaced_ingress(namespace)),
-    }
+    kinds = {}
+    unreadable = {}
+    for kind, resource in sorted(listable_kinds().items()):
+        try:
+            items = dynamic_client.get(resource, namespace=namespace).items
+        except ApiException as error:
+            # Status and reason only: the error body can echo parts of the request or object.
+            unreadable[kind] = f"{error.status} {error.reason}"
+            continue
+        if items:
+            kinds[kind] = sorted(item.metadata.name for item in items)
+    return {"kinds": kinds, "unreadable": unreadable}
 
-def names(resource_list):
-    """Sorted names from a Kubernetes list response.
-
-    Args:
-        resource_list: the response of a list_namespaced_* call.
-    """
-    return sorted(item.metadata.name for item in resource_list.items)

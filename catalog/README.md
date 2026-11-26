@@ -26,7 +26,7 @@ Each file has two parts. The index part is short and goes into the system prompt
 - **`area`** (required): `resilience`, `performance` or `exposure`. Used by `focus.areas` and to split the report into sections.
 - **`category`** (required): the failure category, from the AWS Resilience Analysis Framework: `single-point-of-failure`, `excessive-load`, `excessive-latency`, `misconfiguration` or `shared-fate`. Used to track coverage and to guide the agent beyond the catalog.
 - **`summary`** (string, required): one sentence on what the weakness is and why it hurts. It is the only description of the check the agent sees in the index.
-- **`applies_to`** (list, required): Kubernetes resource kinds the check is relevant to, for example `[Deployment, StatefulSet]`. Checks with no matching resource in the system are left out of the index.
+- **`applies_to`** (list, required): the kinds the check is relevant to, as `group/Kind` without a version, for example `[apps/Deployment, apps/StatefulSet]`. The core group is written `core` (`core/Service`). Checks with no matching kind in the system are left out of the index.
 - **`max_level`** (required): the highest action level that may be used to prove the check: `observe`, `probe` or `disrupt`. A safety rule, not a capability: some checks could be proven by disruption but must not be, because the proof would destroy data. It is in the index so the agent knows which checks it can prove in a run before reading their details.
 
 ### Details
@@ -50,7 +50,7 @@ Each file has two parts. The index part is short and goes into the system prompt
     area: resilience
     category: single-point-of-failure
     summary: The workload runs one replica, so losing that pod makes it unavailable.
-    applies_to: [Deployment, StatefulSet]
+    applies_to: [apps/Deployment, apps/StatefulSet]
     max_level: disrupt
 
     default_severity: medium

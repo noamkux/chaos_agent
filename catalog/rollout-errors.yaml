@@ -5,7 +5,7 @@ category: misconfiguration
 summary: >
   Pods do not shut down gracefully, so a normal rollout or pod replacement drops
   requests.
-applies_to: [Deployment, StatefulSet, DaemonSet]
+applies_to: [apps/Deployment, apps/StatefulSet, apps/DaemonSet]
 max_level: disrupt
 
 # Details: returned only by get_check

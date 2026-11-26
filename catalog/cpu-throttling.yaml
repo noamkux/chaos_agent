@@ -5,7 +5,7 @@ category: excessive-load
 summary: >
   A CPU limit below what the workload needs under load throttles it, and latency rises
   while the node still has free CPU.
-applies_to: [Deployment, StatefulSet, DaemonSet]
+applies_to: [apps/Deployment, apps/StatefulSet, apps/DaemonSet]
 max_level: disrupt
 
 # Details: returned only by get_check

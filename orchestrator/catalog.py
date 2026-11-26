@@ -35,7 +35,8 @@ def load_catalog(directory=CATALOG_DIR):
         A dict from check name to check.
 
     Raises:
-        ValueError: a file is missing fields, or its name does not match the file name.
+        ValueError: a file is missing fields, its name does not match the file name, or an
+            applies_to entry is not group/Kind.
     """
     checks = {}
     for path in sorted(directory.glob("*.yaml")):
@@ -46,6 +47,11 @@ def load_catalog(directory=CATALOG_DIR):
         if check["name"] != path.stem:
             raise ValueError(f"{path.name}: name '{check['name']}' does not match the file name")
         checks[check["name"]] = check
+        for kind in check["applies_to"]:
+            group, _, name = kind.partition("/")
+            if not group or not name or "/" in name:
+                raise ValueError(f"{path.name}: applies_to '{kind}' is not group/Kind, "
+                                 "for example apps/Deployment or core/Service")
     return checks
 
 

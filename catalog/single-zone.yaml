@@ -5,7 +5,7 @@ category: single-point-of-failure
 summary: >
   All replicas run in one zone, so a zone outage takes the workload down even with
   several replicas.
-applies_to: [Deployment, StatefulSet]
+applies_to: [apps/Deployment, apps/StatefulSet]
 max_level: disrupt
 
 # Details: returned only by get_check

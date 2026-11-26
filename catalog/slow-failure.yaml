@@ -4,7 +4,7 @@ area: resilience
 category: excessive-latency
 summary: >
   When a dependency is gone, requests block for a long time instead of failing fast.
-applies_to: [Deployment, StatefulSet]
+applies_to: [apps/Deployment, apps/StatefulSet]
 max_level: disrupt
 
 # Details: returned only by get_check

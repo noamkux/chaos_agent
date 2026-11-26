@@ -5,7 +5,7 @@ category: single-point-of-failure
 summary: >
   A container has no readiness probe, so traffic reaches new pods before they can serve
   it.
-applies_to: [Deployment, StatefulSet, DaemonSet]
+applies_to: [apps/Deployment, apps/StatefulSet, apps/DaemonSet]
 max_level: disrupt
 
 # Details: returned only by get_check

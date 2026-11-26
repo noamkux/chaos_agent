@@ -5,7 +5,7 @@ category: misconfiguration
 summary: >
   A container runs as root, privileged or with privilege escalation, so a compromise of
   the app reaches the node more easily.
-applies_to: [Deployment, StatefulSet, DaemonSet]
+applies_to: [apps/Deployment, apps/StatefulSet, apps/DaemonSet]
 max_level: observe
 
 # Details: returned only by get_check

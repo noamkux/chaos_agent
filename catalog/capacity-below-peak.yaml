@@ -3,7 +3,7 @@ name: capacity-below-peak
 area: performance
 category: excessive-load
 summary: The workload breaks its SLO below the peak load it is expected to handle.
-applies_to: [Deployment, StatefulSet]
+applies_to: [apps/Deployment, apps/StatefulSet]
 max_level: disrupt
 
 # Details: returned only by get_check

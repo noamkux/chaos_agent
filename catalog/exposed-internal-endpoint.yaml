@@ -5,7 +5,7 @@ category: misconfiguration
 summary: >
   An internal endpoint (metrics, debug, admin) is reachable through the user-facing
   entrypoint.
-applies_to: [Service, Ingress]
+applies_to: [core/Service, networking.k8s.io/Ingress]
 max_level: probe
 
 # Details: returned only by get_check

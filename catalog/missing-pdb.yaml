@@ -5,7 +5,7 @@ category: single-point-of-failure
 summary: >
   No PodDisruptionBudget covers the workload, so a voluntary disruption such as a node
   drain can evict all replicas at once.
-applies_to: [Deployment, StatefulSet]
+applies_to: [apps/Deployment, apps/StatefulSet]
 max_level: observe
 
 # Details: returned only by get_check

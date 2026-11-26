@@ -5,7 +5,7 @@ category: misconfiguration
 summary: >
   An internal component can be reached from anywhere in the cluster without
   authentication.
-applies_to: [Service]
+applies_to: [core/Service]
 max_level: probe
 
 # Details: returned only by get_check

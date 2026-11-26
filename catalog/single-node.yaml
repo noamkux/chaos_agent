@@ -5,7 +5,7 @@ category: single-point-of-failure
 summary: >
   All replicas run on one node, so losing that node takes the workload down even with
   several replicas.
-applies_to: [Deployment, StatefulSet]
+applies_to: [apps/Deployment, apps/StatefulSet]
 max_level: disrupt
 
 # Details: returned only by get_check
