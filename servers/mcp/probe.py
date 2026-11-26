@@ -6,6 +6,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 from kubernetes.client.exceptions import ApiException
 from mcp.server.mcpserver.exceptions import ToolError
@@ -108,7 +109,7 @@ def summarize(out_file, names):
 
 
 async def measure_journeys(namespace: str, service: str, port: int,
-                           journeys: dict[str, list[dict]], duration_s: int, rate: int) -> dict:
+                           journeys: dict[str, list[dict]], duration_s: int, rate: int) -> dict[str, Any]:
     """Run every journey at a fixed rate for duration_s seconds, as new users, and report each second of arrival: journeys that succeeded, failed, p95 latency and errors."""
     base_url = service_url(namespace, service, port)
     check_journeys(journeys)

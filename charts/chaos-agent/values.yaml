@@ -18,3 +18,27 @@ postgresql:
       memory: 512Mi
   nodeSelector: {}
   tolerations: []
+
+mcp:
+  image:
+    repository: chaos-agent-mcp
+    tag: ""
+    pullPolicy: IfNotPresent
+  # Namespaces the MCP servers may read and act on. Required: the servers refuse every other namespace.
+  allowedNamespaces: []
+  port: 8081
+  levels:
+    observe:
+      enabled: false
+    probe:
+      enabled: true
+    disrupt:
+      enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  nodeSelector: {}
+  tolerations: []

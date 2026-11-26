@@ -1,0 +1,103 @@
+{{- /* One ServiceAccount, Deployment and Service per enabled level: same image, its own LEVEL and identity. */ -}}
+{{- $root := . }}
+{{- if not .Values.mcp.allowedNamespaces }}
+{{- fail "mcp.allowedNamespaces is required: the namespaces the MCP servers may touch" }}
+{{- end }}
+{{- $tag := required "mcp.image.tag is required" .Values.mcp.image.tag }}
+{{- range $level, $config := .Values.mcp.levels }}
+{{- if $config.enabled }}
+{{- $name := include "chaos-agent.mcp.fullname" (list $root $level) }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root $level) | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root $level) | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "chaos-agent.mcp.selectorLabels" (list $root $level) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "chaos-agent.mcp.selectorLabels" (list $root $level) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with $root.Values.mcp.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.mcp.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: server
+          image: "{{ $root.Values.mcp.image.repository }}:{{ $tag }}"
+          imagePullPolicy: {{ $root.Values.mcp.image.pullPolicy }}
+          env:
+            - name: LEVEL
+              value: {{ $level | quote }}
+            - name: ALLOWED_NAMESPACES
+              value: {{ join "," $root.Values.mcp.allowedNamespaces | quote }}
+            - name: PORT
+              value: {{ $root.Values.mcp.port | quote }}
+          ports:
+            - name: mcp
+              containerPort: {{ $root.Values.mcp.port }}
+          readinessProbe:
+            tcpSocket:
+              port: mcp
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: mcp
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            {{- toYaml $root.Values.mcp.resources | nindent 12 }}
+          volumeMounts:
+            # k6 configs and results, and the Kubernetes discovery cache; the root filesystem is read-only.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root $level) | nindent 4 }}
+spec:
+  selector:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root $level) | nindent 4 }}
+  ports:
+    - name: mcp
+      port: {{ $root.Values.mcp.port }}
+      targetPort: mcp
+{{- end }}
+{{- end }}
