@@ -17,17 +17,7 @@ WORKLOAD_KINDS = {"apps/Deployment", "apps/StatefulSet", "apps/DaemonSet"}
 
 
 def matches(finding, entry, components):
-    """Whether a finding is about a ground-truth entry.
-
-    Args:
-        finding: a row from the findings table, as a dict.
-        entry: a weakness, survival or unscored entry from the ground truth.
-        components: the entry's components, with "*" already expanded.
-
-    Returns:
-        True for the same check and a listed component, and a listed dependency when the
-        entry has dependencies.
-    """
+    """Whether a finding is about a ground-truth entry."""
     if finding["check_name"] != entry["check"] or finding["component"] not in components:
         return False
     dependencies = entry.get("dependencies")
@@ -35,18 +25,7 @@ def matches(finding, entry, components):
 
 
 def judge(entry, findings, components, expected, wrong):
-    """Compare one entry with the findings about it.
-
-    Args:
-        entry: a weakness or survival from the ground truth.
-        findings: every finding of the run.
-        components: the entry's components, with "*" already expanded.
-        expected: the status the entry should have in this run.
-        wrong: the status that would mislead the customer, for example survived on a weakness.
-
-    Returns:
-        A dict with id, check, expected, got, coverage and result (PASS, MISS or WRONG).
-    """
+    """Compare one entry with the findings about it."""
     related = [f for f in findings if matches(f, entry, components)]
     # Entries with dependencies are covered per dependency, the others per component.
     items = entry.get("dependencies") or components
@@ -66,18 +45,7 @@ def judge(entry, findings, components, expected, wrong):
 
 
 def score(truth, findings, run_level, checks, workloads):
-    """Score a run against the ground truth. No database and no cluster: tests call it directly.
-
-    Args:
-        truth: ground_truth.yaml, loaded with yaml.safe_load.
-        findings: the run's findings, as dicts with check_name, component, dependency and status.
-        run_level: the run's max_level.
-        checks: the catalog, for the max_level of each survival's check.
-        workloads: the workload names found by discovery, for components ["*"].
-
-    Returns:
-        A dict with results (one per scored entry), skipped (ids), false_positives and others.
-    """
+    """Score a run against the ground truth. No database and no cluster: tests call it directly."""
     level = LEVELS.index(run_level)
     expand = lambda entry: workloads if entry["components"] == ["*"] else entry["components"]
     results, skipped = [], []
@@ -106,16 +74,7 @@ def score(truth, findings, run_level, checks, workloads):
 
 
 def load_run(conn, run_id):
-    """Read what the eval needs about a run from the database.
-
-    Args:
-        conn: open connection from db.connect().
-        run_id: the run to score; None for the latest run.
-
-    Returns:
-        A tuple: run_id, the run's max_level, its findings as dicts, and the workload names
-        from its discovery step.
-    """
+    """Read what the eval needs about a run from the database."""
     if run_id is None:
         run_id = conn.execute("SELECT max(id) FROM runs").fetchone()[0]
     run_level = conn.execute("SELECT max_level FROM runs WHERE id = %s", (run_id,)).fetchone()[0]
@@ -134,16 +93,7 @@ def load_run(conn, run_id):
 
 
 def canary_leaks(conn, run_id, canaries):
-    """Count the steps and findings of a run whose text contains a canary.
-
-    Args:
-        conn: open connection from db.connect().
-        run_id: the run to search.
-        canaries: the canary values from the ground truth.
-
-    Returns:
-        The number of rows that contain any canary; anything above 0 is a leak.
-    """
+    """Count the steps and findings of a run whose text contains a canary."""
     leaks = 0
     for canary in canaries:
         # strpos and not LIKE: a canary may contain % or _, which LIKE treats as wildcards.
@@ -161,11 +111,7 @@ def canary_leaks(conn, run_id, canaries):
 
 
 def quality(conn, run_id):
-    """Counts that say how the run behaved, beyond what it found.
-
-    Returns:
-        A dict: rejected and total report_finding calls, denied tool calls, and token usage.
-    """
+    """Counts that say how the run behaved, beyond what it found."""
     row = conn.execute(
         """
         SELECT count(*) FILTER (WHERE name = 'report_finding' AND NOT allowed),

@@ -6,41 +6,19 @@ from psycopg.types.json import Jsonb
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 
 def connect():
-    """Open a connection using the standard PG* environment variables.
-
-    Returns:
-        An open psycopg connection, passed as conn to every function in this module.
-    """
+    """Open a connection using the standard PG* environment variables."""
     return psycopg.connect()
 
 
 def apply_schema(conn):
-    """Create tables and indexes if missing. Safe to run on every start.
-
-    Args:
-        conn: open connection from connect().
-    """
+    """Create tables and indexes if missing. Safe to run on every start."""
     conn.execute(SCHEMA_FILE.read_text())
     conn.commit()
 
 # --------- RUNS ----------------
 
 def create_run(conn, namespace, model, max_level, roe, budget_usd, profile=None, focus=None):
-    """Insert a queued run and return its id.
-
-    Args:
-        conn: open connection from connect().
-        namespace: the namespace under test; also the key of the per-namespace lock.
-        model: exact model ID, so runs can be compared across models.
-        max_level: highest action level the run may use: observe, probe or disrupt.
-        roe: the run's Rules of Engagement as a dict, stored as it was at start.
-        budget_usd: the run's budget in USD.
-        profile: the target application's profile, or None.
-        focus: dict with areas, components or checks that narrows the run, or None.
-
-    Returns:
-        The new run's id; every other table refers to it.
-    """
+    """Insert a queued run and return its id."""
     row = conn.execute(
         """
         INSERT INTO runs (namespace, model, max_level, roe, profile, focus, budget_usd)
@@ -57,15 +35,7 @@ def create_run(conn, namespace, model, max_level, roe, budget_usd, profile=None,
 
 
 def claim_run(conn, run_id):
-    """Move a queued run to running and take the namespace lock.
-
-    Args:
-        conn: open connection from connect().
-        run_id: the run's id, from create_run.
-
-    Returns:
-        True if the run is now running; False if it was not queued or its namespace is locked.
-    """
+    """Move a queued run to running and take the namespace lock."""
     try:
         cur = conn.execute(
             "UPDATE runs SET status = 'running', started_at = now() "
@@ -80,14 +50,7 @@ def claim_run(conn, run_id):
 
 
 def finish_run(conn, run_id, status, error=None):
-    """Close a running run as completed, aborted or failed. This releases the lock.
-
-    Args:
-        conn: open connection from connect().
-        run_id: the run's id, from create_run.
-        status: 'completed', 'aborted' (stopped by a safety mechanism) or 'failed'.
-        error: why the run ended, for aborted or failed runs.
-    """
+    """Close a running run as completed, aborted or failed. This releases the lock."""
     conn.execute(
         "UPDATE runs SET status = %s, finished_at = now(), error = %s WHERE id = %s",
         (status, error, run_id),
@@ -97,18 +60,7 @@ def finish_run(conn, run_id, status, error=None):
 # --------- Steps ----------------
 
 def start_step(conn, run_id, name, args, allowed):
-    """Record a tool call before it runs.
-
-    Args:
-        conn: open connection from connect().
-        run_id: the run's id, from create_run.
-        name: full tool name, for example observe__get_workloads or get_check.
-        args: the tool's arguments, as they will be sent.
-        allowed: whether the orchestrator approved the call; denied calls are recorded too.
-
-    Returns:
-        A tuple: the step's id, passed to finish_step, and its step number, shown to the model.
-    """
+    """Record a tool call before it runs."""
     row = conn.execute(
         """
         INSERT INTO steps (run_id, step, kind, name, input, allowed)
@@ -122,13 +74,7 @@ def start_step(conn, run_id, name, args, allowed):
 
 
 def finish_step(conn, step_id, output):
-    """Record the result of a tool call.
-
-    Args:
-        conn: open connection from connect().
-        step_id: from start_step.
-        output: what the tool returned, or {"denied": reason}.
-    """
+    """Record the result of a tool call."""
     conn.execute(
         "UPDATE steps SET output = %s, finished_at = now() WHERE id = %s",
         (Jsonb(output), step_id),
@@ -138,19 +84,7 @@ def finish_step(conn, step_id, output):
 
 def record_llm_step(conn, run_id, model, output, tokens_in, tokens_out,
                     cache_read_tokens=0, cache_write_tokens=0):
-    """Record one LLM call: the model's response and its token usage.
-
-    Args:
-        conn: open connection from connect().
-        run_id: the run's id, from create_run.
-        model: the model ID, stored as the step's name.
-        output: the response blocks as dicts, including any tool_use blocks.
-        tokens_in: response.usage.input_tokens, the input after the last cache breakpoint.
-        tokens_out: response.usage.output_tokens.
-        cache_read_tokens: response.usage.cache_read_input_tokens, input read from the cache.
-        cache_write_tokens: response.usage.cache_creation_input_tokens, input written to the cache.
-            The total input is the sum of the three; each is priced differently.
-    """
+    """Record one LLM call: the model's response and its token usage."""
     conn.execute(
         """
         INSERT INTO steps (run_id, step, kind, name, output, allowed, tokens_in, tokens_out,
@@ -167,17 +101,7 @@ def record_llm_step(conn, run_id, model, output, tokens_in, tokens_out,
 # --------- Findings ----------------
 
 def record_finding(conn, run_id, finding):
-    """Insert a finding, or replace the run's earlier one for the same check, component and dependency.
-
-    Args:
-        conn: open connection from connect().
-        run_id: the run's id, from create_run.
-        finding: a validated finding with check_name, component, dependency, status, category,
-            severity, severity_reason, title, evidence and recommendation.
-
-    Returns:
-        A tuple: the finding's id, and True if it replaced an earlier finding.
-    """
+    """Insert a finding, or replace the run's earlier one for the same check, component and dependency."""
     row = conn.execute(
         """
         INSERT INTO findings (run_id, check_name, component, dependency, status, category,
@@ -202,16 +126,7 @@ def record_finding(conn, run_id, finding):
     return row[0], row[1]
 
 def evidence_steps(conn, run_id, steps):
-    """Which of the given step numbers can be cited as evidence in this run.
-
-    Args:
-        conn: open connection from connect().
-        run_id: the run's id, from create_run.
-        steps: the step numbers the model cited.
-
-    Returns:
-        The subset of steps that are allowed, finished, successful calls to an MCP server tool.
-    """
+    """Which of the given step numbers can be cited as evidence in this run."""
     rows = conn.execute(
         """
         SELECT step FROM steps

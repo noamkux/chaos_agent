@@ -20,14 +20,7 @@ SERVERS = {
 
 
 async def load_tools(max_level):
-    """Return the tools the agent may see in this run, in the Claude API format.
-
-    Args:
-        max_level: the run's level; ALLOWED_LEVELS maps it to the servers this run may use.
-
-    Returns:
-        Tool definitions named <level>__<tool>, ready for the tools parameter of the API.
-    """
+    """Return the tools the agent may see in this run, in the Claude API format."""
     allowed_levels = ALLOWED_LEVELS[max_level]
     tools = []
     for server, url in SERVERS.items():
@@ -45,34 +38,14 @@ async def load_tools(max_level):
 
 
 def result_content(result):
-    """Prefer structured output; fall back to the text blocks (used for errors).
-
-    Args:
-        result: the CallToolResult returned by the MCP client.
-
-    Returns:
-        The structured content (a list tool's output is under "result"), or the error text.
-    """
+    """Prefer structured output; fall back to the text blocks (used for errors)."""
     if result.structured_content is not None:
         return result.structured_content
     return "\n".join(b.text for b in result.content if isinstance(b, TextContent))
 
 
 async def call_tool(conn, run_id, allowed_tools, scope, name, args):
-    """Check a call against the run's rules, execute it, record it.
-
-    Args:
-        conn: open connection from connect().
-        run_id: the run's id, from create_run.
-        allowed_tools: names returned by load_tools for this run; any other name is denied.
-        scope: the run's namespaces, from roe["scope"]["namespaces"].
-        name: <level>__<tool>, from the model's tool_use block or from discovery.
-        args: the tool's arguments; from the model, so untrusted.
-
-    Returns:
-        JSON text {"step", "is_error", "content"} for the agent, where step is the step number
-        the agent cites as evidence; or "DENIED: <reason>".
-    """
+    """Check a call against the run's rules, execute it, record it."""
     denied = None
     if name not in allowed_tools:
         denied = f"tool '{name}' is not allowed in this run"

@@ -47,12 +47,7 @@ SKIPPED_KINDS = {
 }
 
 def listable_kinds():
-    """Every namespaced kind the API server can list, at its preferred version.
-
-    Returns:
-        A dict from "group/Kind" (core/Service, apps/Deployment) to its dynamic Resource,
-        without SKIPPED_KINDS.
-    """
+    """Every namespaced kind the API server can list, at its preferred version."""
     dynamic_client.resources.invalidate_cache()
     kinds = {}
     for resource in dynamic_client.resources.search():
@@ -66,29 +61,12 @@ def listable_kinds():
     return kinds
 
 def container_facts(container):
-    """The settings resilience checks read from one container, as in the workload's YAML.
-
-    Args:
-        container: a V1Container from the pod template.
-
-    Returns:
-        A dict with the CONTAINER_FIELDS that are set.
-    """
+    """The settings resilience checks read from one container, as in the workload's YAML."""
     data = serialize(container)
     return {field: data[field] for field in CONTAINER_FIELDS if field in data}
 
 def env_facts(container):
-    """Names and sources of a container's environment variables. Values never leave this function.
-
-    Args:
-        container: a V1Container from the pod template.
-
-    Returns:
-        A dict with "env": a list of {"name", "source"}, where source is "literal" for a value
-        written in the spec or the valueFrom type (secretKeyRef, configMapKeyRef, fieldRef,
-        resourceFieldRef); and "envFrom": a list of {"source", "name"} for a whole ConfigMap
-        (configMapRef) or Secret (secretRef). Empty lists are left out.
-    """
+    """Names and sources of a container's environment variables. Values never leave this function."""
     # env: variables defined one by one, each with its own name.
     # Looks at where each value comes from: written in the spec (literal) or a reference (valueFrom).
     # Returns name and source only; var.value is never read, so a secret cannot be returned by mistake.
@@ -132,17 +110,7 @@ def get_workloads(namespace: str) -> list[dict]:
     return workloads
 
 def summarize(workload, kind):
-    """The facts resilience checks read from a workload, in Kubernetes field names.
-
-    Args:
-        workload: a Deployment, StatefulSet or DaemonSet object from the Kubernetes API.
-        kind: "apps/Deployment", "apps/StatefulSet" or "apps/DaemonSet", the same names as in
-            get_inventory; objects in list responses do not carry their kind.
-
-    Returns:
-        A dict with the workload's replicas, pod labels, POD_FIELDS that are set, volumes
-        (name and type), and every container with container_facts and env_facts.
-    """
+    """The facts resilience checks read from a workload, in Kubernetes field names."""
     template = workload.spec.template
     pod = serialize(template.spec)
     if kind == "apps/DaemonSet":

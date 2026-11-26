@@ -9,31 +9,23 @@ CATEGORIES = ["single-point-of-failure", "excessive-load", "excessive-latency",
               "misconfiguration", "shared-fate"]
 LEVELS = ["observe", "probe", "disrupt"]
 
-# Above this many object names, component and dependency are sent without an enum: a very
+# Above this many object names, components and dependency are sent without an enum: a very
 # large enum makes the strict schema too complex for the API, and the run would fail on its
 # first call. validate() checks every name against the full inventory either way.
 MAX_ENUM_NAMES = 300
 
 def report_finding_tool(selected, components):
-    """The report_finding tool for one run, with the run's checks and components as enums.
-
-    Args:
-        selected: the checks chosen for this run by select_checks.
-        components: every object name found by discovery.
-
-    Returns:
-        A tool definition for the tools parameter of the API, in strict mode. component and
-        dependency are enums only up to MAX_ENUM_NAMES names.
-    """
+    """The report_finding tool for one run, with the run's checks and components as enums."""
     names = sorted(components)
     name_field = {"type": "string", "enum": names} if len(names) <= MAX_ENUM_NAMES else {"type": "string"}
     return {
         "name": REPORT_FINDING_NAME,
         "description": (
-            "Record the result of one check for one component. Call it for every check you "
-            "test, whatever the result: confirmed, survived, not_proven or inconclusive. "
-            "A later call with the same check_name, component and dependency replaces the "
-            "earlier one. Use check_name 'other' for a weakness outside the catalog."
+            "Record the result of one check for every component that has the same result and "
+            "evidence, in one call; call again for components with a different result. Call it "
+            "for every check you test, whatever the result: confirmed, survived, not_proven or "
+            "inconclusive. A later call with the same check_name, component and dependency "
+            "replaces the earlier one. Use check_name 'other' for a weakness outside the catalog."
         ),
         "strict": True,
         "input_schema": {
@@ -41,7 +33,8 @@ def report_finding_tool(selected, components):
             "additionalProperties": False,
             "properties": {
                 "check_name": {"type": "string", "enum": sorted(selected) + [OTHER]},
-                "component": {**name_field, "description": "An object name from the inventory."},
+                "components": {"type": "array", "items": name_field,
+                               "description": "Object names from the inventory, at least one."},
                 "dependency": {**name_field,
                                "description": "For a check about a pair: the component it depends on."},
                 "status": {"type": "string", "enum": STATUSES},
@@ -51,33 +44,24 @@ def report_finding_tool(selected, components):
                                      "description": "What those tool results show, in one or two sentences."},
                 "title": {"type": "string", "description": "One line for the report."},
                 "severity": {"type": "string", "enum": SEVERITIES,
-                             "description": "Only to change the check's default severity."},
+                             "description": ("Required for check_name 'other'. For a catalog check, "
+                                             "only to change its default severity.")},
                 "severity_reason": {"type": "string",
                                     "description": "Required when severity is set."},
                 "category": {"type": "string", "enum": CATEGORIES,
                              "description": "Required for check_name 'other'."},
             },
-            "required": ["check_name", "component", "status", "evidence_steps",
+            "required": ["check_name", "components", "status", "evidence_steps",
                          "evidence_summary", "title"],
         },
     }
 
 def validate(args, selected, components, run_level, valid_steps):
-    """Check a report_finding call against the run's rules and build the row for the findings table.
-
-    Args:
-        args: the model's tool_use input; untrusted.
-        selected: the checks chosen for this run by select_checks.
-        components: every object name found by discovery.
-        run_level: the run's max_level.
-        valid_steps: the cited steps that db.evidence_steps accepted.
-
-    Returns:
-        A tuple: the finding for db.record_finding, or None; and the error for the model, or None.
-    """
+    """Check a report_finding call against the run's rules and build one row per component for the findings table."""
     # Kubernetes names are lowercase, and the LLM can change the string and add Up case letters.
     name = str(args.get("check_name", "")).lower()
-    component = str(args.get("component", "")).lower()
+    # dict.fromkeys drops a name the model repeated and keeps the order.
+    reported = list(dict.fromkeys(str(c).lower() for c in args.get("components") or []))
     dependency = args.get("dependency")
     dependency = dependency.lower() if dependency else None
     status = str(args.get("status", "")).lower()
@@ -88,10 +72,13 @@ def validate(args, selected, components, run_level, valid_steps):
     # What the model reported: a real check, a real component, a real status.
     if name != OTHER and name not in selected:
         return None, f"unknown check_name '{name}'. Use a name from the catalog list, or 'other'."
-    if component not in components:
-        return None, f"unknown component '{component}'. Use a name from the inventory."
-    if dependency is not None and (dependency not in components or dependency == component):
-        return None, f"dependency '{dependency}' must be another name from the inventory."
+    if not reported:
+        return None, "components must list at least one name from the inventory."
+    unknown = [c for c in reported if c not in components]
+    if unknown:
+        return None, f"unknown components {unknown}. Use names from the inventory."
+    if dependency is not None and (dependency not in components or dependency in reported):
+        return None, f"dependency '{dependency}' must be a name from the inventory that is not in components."
     if status not in STATUSES:
         return None, f"status must be one of {STATUSES}."
     if not title or not summary:
@@ -129,7 +116,7 @@ def validate(args, selected, components, run_level, valid_steps):
     if category not in CATEGORIES:
         return None, f"category is required for check_name 'other', one of {CATEGORIES}."
 
-    return {
+    return [{
         "check_name": name,
         "component": component,
         "dependency": dependency,
@@ -140,4 +127,4 @@ def validate(args, selected, components, run_level, valid_steps):
         "title": title,
         "evidence": {"steps": sorted(cited), "summary": summary},
         "recommendation": check["remediation"].strip() if check else None,
-    }, None
+    } for component in reported], None

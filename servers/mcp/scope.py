@@ -10,13 +10,6 @@ ALLOWED_NAMESPACES = set(os.environ["ALLOWED_NAMESPACES"].split(","))
 
 
 def check_scope(namespace):
-    """Reject any namespace this server was not deployed to touch.
-
-    Args:
-        namespace: the namespace a tool call asks for.
-
-    Raises:
-        ToolError: the namespace is not in ALLOWED_NAMESPACES; the message reaches the agent.
-    """
+    """Reject any namespace this server was not deployed to touch."""
     if namespace not in ALLOWED_NAMESPACES:
         raise ToolError(f"namespace '{namespace}' is out of scope")
