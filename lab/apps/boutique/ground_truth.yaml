@@ -33,12 +33,34 @@ weaknesses:
   - id: N3
     check: open-network-access
     area: exposure
-    components: [redis-cart]
+    components:
+      [
+        adservice,
+        cartservice,
+        checkoutservice,
+        currencyservice,
+        emailservice,
+        paymentservice,
+        productcatalogservice,
+        recommendationservice,
+        redis-cart,
+        shippingservice,
+      ]
     severity: high
     level: probe
     origin: natural
     verified: true
-    proof: a pod in another namespace connects to redis-cart.boutique:6379 and PING returns PONG (no NetworkPolicy, no password)
+    proof: no NetworkPolicy in the namespace; a TCP connection from another namespace reaches every internal Service
+
+  - id: N9
+    check: unauthenticated-access
+    area: exposure
+    components: [redis-cart]
+    severity: high
+    level: probe
+    origin: natural
+    verified: false
+    proof: a PING from another namespace to redis-cart.boutique:6379 returns PONG (no password)
 
   - id: N4
     check: ephemeral-state

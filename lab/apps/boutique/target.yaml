@@ -1,0 +1,49 @@
+# The application's profile: what it is and what normal looks like.
+# Written by the application team and kept with its code. Unlike ground_truth.yaml,
+# the agent reads this file.
+app: online-boutique
+
+# Where a user's requests enter the system: a Service in the run's namespace.
+entrypoint:
+  service: frontend
+  port: 80
+
+# User journeys. The steps of a journey run in order, in one session (cookies are kept).
+# writes: true marks a journey that changes data; the Rules of Engagement decide if it may run.
+journeys:
+  - name: home
+    steps:
+      - {method: GET, path: /}
+  - name: product
+    steps:
+      - {method: GET, path: /product/OLJCESPC7Z}
+  - name: cart
+    writes: true
+    steps:
+      - {method: POST, path: /cart, form: {product_id: OLJCESPC7Z, quantity: "1"}}
+      - {method: GET, path: /cart}
+  - name: checkout
+    writes: true
+    steps:
+      - {method: POST, path: /cart, form: {product_id: OLJCESPC7Z, quantity: "1"}}
+      - method: POST
+        path: /cart/checkout
+        form:
+          email: lab@example.com
+          street_address: 1 Main St
+          zip_code: "12345"
+          city: Test
+          state: CA
+          country: US
+          credit_card_number: "4432801561520454"
+          credit_card_expiration_month: "1"
+          credit_card_expiration_year: "2030"
+          credit_card_cvv: "672"
+
+# What normal looks like for every journey, measured at the entrypoint.
+steady_state:
+  success_rate: 0.99
+  p95_ms: 500
+
+load:
+  expected_peak_rps: 50

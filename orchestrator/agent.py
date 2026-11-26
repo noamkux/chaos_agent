@@ -131,7 +131,6 @@ def format_inventory(inventory):
     """
     return "\n".join(f"- {kind}: {', '.join(names)}" for kind, names in sorted(inventory.items()))
 
-
 def format_unreadable(unreadable):
     """The unreadable kinds as one line for the prompt, sorted so the prompt is stable.
 
