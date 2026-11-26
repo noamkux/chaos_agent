@@ -48,25 +48,3 @@ CREATE TABLE IF NOT EXISTS undo_actions (
     created_at   timestamptz  NOT NULL DEFAULT now(),
     done_at      timestamptz
 );
-
-CREATE TABLE IF NOT EXISTS findings (
-    id               bigint       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    run_id           bigint       NOT NULL REFERENCES runs (id),
-    check_name       text         NOT NULL,
-    component        text         NOT NULL,
-    /* dependency for checks that the target are diffrent service that depends on each other*/
-    dependency       text,
-    status           text         NOT NULL
-                     CHECK (status IN ('confirmed', 'survived', 'not_proven', 'inconclusive')),
-    category         text         NOT NULL
-                     CHECK (category IN ('single-point-of-failure', 'excessive-load',
-                                         'excessive-latency', 'misconfiguration', 'shared-fate')),
-    severity         text         NOT NULL CHECK (severity IN ('high', 'medium', 'low')),
-    severity_reason  text,
-    title            text         NOT NULL,
-    evidence         jsonb        NOT NULL,
-    recommendation   text,
-    created_at       timestamptz  NOT NULL DEFAULT now(),
-    updated_at       timestamptz  NOT NULL DEFAULT now(),
-    UNIQUE NULLS NOT DISTINCT (run_id, check_name, component, dependency)
-);

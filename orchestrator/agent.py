@@ -1,11 +1,9 @@
 """The agent loop (harness): the LLM proposes tool calls, the orchestrator checks, executes and records them."""
 
 import json
-import findings
 
 from anthropic import AsyncAnthropic
 
-import catalog
 import db
 import tools
 
@@ -24,13 +22,6 @@ When you have enough information, stop calling tools and write a short summary o
 
 RUN_SECTION = """## This run
 Highest action level allowed in this run: {max_level}.
-For each check, use at most the lower of this level and the check's max_level.
-If proving a check needs a higher level than this run allows, report what you observed and say it was not proven.
-Report each result for every component it applies to, not for one example.
-For a check about a pair, a component and a dependency it calls, 
-report one result for every dependency of the component, not for one example. 
-Find dependencies in the workload facts,
-for example environment variable names that refer to a Service in the inventory.
 Kinds that discovery could not read, so nothing is known about them: {unreadable}.
 
 Objects in scope, from discovery (step {discovery_steps}). Cite those steps as evidence for what exists or is missing.
@@ -45,10 +36,8 @@ Environment variables show only the name and where the value comes from (literal
 Not included at all: container command, args and ports, and the values of any variable.
 {workloads}"""
 
-CHECKS = catalog.load_catalog()
-
-# Every kind some check applies to; discovery must be able to read all of them.
-CATALOG_KINDS = {kind for check in CHECKS.values() for kind in check["applies_to"]}
+# Kinds the agent must see to know what it can break; a run that cannot read them fails.
+REQUIRED_KINDS = {"apps/Deployment", "apps/StatefulSet", "apps/DaemonSet", "core/Service"}
 
 async def collect(conn, run_id, allowed, scope, name):
     """Call a tool that only the orchestrator uses, once per namespace in scope. Recorded in steps like any tool call."""
@@ -73,10 +62,10 @@ async def discover_inventory(conn, run_id, allowed, scope):
         for kind, names in content["kinds"].items():
             inventory[kind] = sorted(set(inventory.get(kind, [])) | set(names))
         unreadable |= content["unreadable"]
-    # A kind the catalog needs but could not be read would silently drop its checks.
-    blocking = {kind: reason for kind, reason in unreadable.items() if kind in CATALOG_KINDS}
+    # A required kind that could not be read would hide what exists, and the agent would test nothing.
+    blocking = {kind: reason for kind, reason in unreadable.items() if kind in REQUIRED_KINDS}
     if blocking:
-        raise RuntimeError(f"discovery cannot read kinds the catalog applies to: {blocking}")
+        raise RuntimeError(f"discovery cannot read required kinds: {blocking}")
     return inventory, unreadable, steps
 
 async def collect_workloads(conn, run_id, allowed, scope):
@@ -91,33 +80,6 @@ def format_workloads(workloads):
     rows = sorted(workloads, key=lambda w: (w["namespace"], w["kind"], w["name"]))
     return "\n".join(json.dumps(w, sort_keys=True) for w in rows)
 
-def call_get_check(conn, run_id, selected, args):
-    """Answer get_check from the run's selected checks. Recorded in steps like a server tool."""
-    step_id, _ = db.start_step(conn, run_id, catalog.GET_CHECK_NAME, args, allowed=True)
-    output = catalog.get_check(selected, args.get("name", ""))
-    db.finish_step(conn, step_id, output)
-    return json.dumps(output)
-
-def call_report_finding(conn, run_id, selected, components, max_level, args):
-    """Validate a finding from the model and record it. Recorded in steps like a server tool."""
-    # Only integers can be looked up; anything else stays in the input and is rejected by validate.
-    cited = [step for step in args.get("evidence_steps") or [] if isinstance(step, int)]
-    valid = db.evidence_steps(conn, run_id, cited)
-    rows, error = findings.validate(args, selected, components, max_level, valid)
-
-    step_id, _ = db.start_step(conn, run_id, findings.REPORT_FINDING_NAME, args, allowed=error is None)
-    if error:
-        output = {"error": error}
-    else:
-        # One row per component, all with the same result and evidence.
-        recorded = [(row["component"], *db.record_finding(conn, run_id, row)) for row in rows]
-        output = {"recorded": [finding_id for _, finding_id, _ in recorded],
-                  "check_name": rows[0]["check_name"], "status": rows[0]["status"],
-                  "components": [component for component, _, _ in recorded],
-                  "replaced": [component for component, _, replaced in recorded if replaced]}
-    db.finish_step(conn, step_id, output)
-    return json.dumps(output)
-
 def format_inventory(inventory):
     """The inventory as one line per kind for the prompt, sorted so the prompt is stable."""
     return "\n".join(f"- {kind}: {', '.join(names)}" for kind, names in sorted(inventory.items()))
@@ -126,34 +88,25 @@ def format_unreadable(unreadable):
     """The unreadable kinds as one line for the prompt, sorted so the prompt is stable."""
     return ", ".join(f"{kind} ({reason})" for kind, reason in sorted(unreadable.items())) or "none"
 
-async def run_agent(conn, run_id, model, max_level, scope, task, focus=None):
+async def run_agent(conn, run_id, model, max_level, scope, task):
     """Run the loop until the model stops calling tools or the iteration limit is reached."""
     client = AsyncAnthropic()
     available = await tools.load_tools(max_level)
     allowed = {t["name"] for t in available}
     inventory, unreadable, discovery_steps = await discover_inventory(conn, run_id, allowed, scope)
-    selected = catalog.select_checks(CHECKS, set(inventory), focus)
-    components = {name for names in inventory.values() for name in names}
     workloads, workload_steps = await collect_workloads(conn, run_id, allowed, scope)
     # Facts belong to the orchestrator: the model gets them in the prompt, not the tools, so it
     # cannot spend calls repeating them. A call it invents anyway is denied.
     available = [tool for tool in available if tool["name"] not in ORCHESTRATOR_TOOLS]
     allowed -= ORCHESTRATOR_TOOLS
-    system = (SYSTEM_PROMPT + "\n\n" + catalog.render_index(selected)
-              + "\n" + RUN_SECTION.format(max_level=max_level, unreadable=format_unreadable(unreadable),
+    system = (SYSTEM_PROMPT + "\n\n" + RUN_SECTION.format(max_level=max_level, unreadable=format_unreadable(unreadable),
                                           discovery_steps=", ".join(map(str, discovery_steps)),
                                           inventory=format_inventory(inventory),
                                           workload_steps=", ".join(map(str, workload_steps)),
                                           workloads=format_workloads(workloads)))
     
-    # Tools the orchestrator answers itself; they never reach an MCP server.
-    internal = {
-        catalog.GET_CHECK_NAME: lambda args: call_get_check(conn, run_id, selected, args),
-        findings.REPORT_FINDING_NAME: lambda args: call_report_finding(
-            conn, run_id, selected, components, max_level, args),
-    
-    }
-    available += [catalog.GET_CHECK_TOOL, findings.report_finding_tool(selected, components)]
+    # Tools the orchestrator answers itself; they never reach an MCP server. Empty for now.
+    internal = {}
 
     messages = [{"role": "user", "content": task}]
 
@@ -187,7 +140,6 @@ async def run_agent(conn, run_id, model, max_level, scope, task, focus=None):
         results = []
         for block in response.content:
             if block.type == "tool_use":
-                # progressive disclosure for the catlog
                 if block.name in internal:
                     output = internal[block.name](block.input)
                 else:

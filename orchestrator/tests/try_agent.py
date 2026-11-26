@@ -6,8 +6,8 @@ import db
 
 MODEL = "claude-haiku-5-5"
 ROE = {"scope": {"namespaces": ["boutique"]}}
-TASK = ("Test the resilience of namespace 'boutique'. Work through every check in the catalog "
-        "that applies to it, within this run's level, and report the result of each check.")
+TASK = ("Study namespace 'boutique' and describe what you would break first to test its "
+        "resilience, and why.")
 
 
 async def main():
@@ -39,25 +39,7 @@ def table(title, headers, rows):
 
 
 def print_run(conn, run_id):
-    """Print what the run did: findings, rejected reports, tool calls and token usage."""
-    findings = conn.execute(
-        """
-        SELECT status, check_name, component, dependency, severity, evidence->'steps'
-        FROM findings WHERE run_id = %s
-        ORDER BY array_position(ARRAY['confirmed', 'survived', 'not_proven', 'inconclusive'], status),
-                 check_name, component
-        """,
-        (run_id,),
-    ).fetchall()
-    table("Findings", ["status", "check", "component", "dependency", "severity", "evidence"], findings)
-
-    rejected = conn.execute(
-        "SELECT step, output->>'error' FROM steps "
-        "WHERE run_id = %s AND name = 'report_finding' AND NOT allowed ORDER BY step",
-        (run_id,),
-    ).fetchall()
-    table("Rejected reports", ["step", "error"], rejected)
-
+    """Print what the run did: tool calls and token usage."""
     calls = conn.execute(
         "SELECT name, count(*), count(*) FILTER (WHERE NOT allowed) FROM steps "
         "WHERE run_id = %s AND kind = 'tool' GROUP BY name ORDER BY min(step)",

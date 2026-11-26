@@ -26,7 +26,7 @@ Postgres does this atomically: when two processes try to take the lock at the sa
 
 ### 5. History
 
-Findings from previous runs: whether a weakness was fixed, whether it came back, and how runs compare across models. This is also the source of findings that enter the RAG after human approval.
+Results of previous runs: whether a weakness was fixed, whether it came back, and how runs compare across models.
 
 ## Database schema
 
@@ -72,19 +72,3 @@ The inverse of every disruptive action, written before the action runs. `steps` 
 - **action**: the inverse operation as JSON, with the exact prior state (for example: scale `cartservice` back to 2 replicas).
 - **status**: `pending` until the restore is verified, then `done`; `failed` if the restore did not work. On startup, every `pending` row is restored before anything else.
 - **created_at, done_at**: when the undo was registered and when it was completed; the gap is how long the system was disrupted.
-
-### findings
-
-One result per check, component and dependency in a run. Written by the orchestrator only after validation (the check exists in the catalog, the component exists, the status matches the run's level, the evidence cites real tool results). A later report for the same key replaces the earlier one.
-
-- **id**: finding identifier.
-- **run_id**: the run that produced it.
-- **check_name, component, dependency**: the key matched against `ground_truth.yaml` by the eval. `check_name` because `CHECK` is reserved in SQL.
-- **status**: `confirmed` (the weakness was proven), `survived` (tested and the system held), `not_proven` (needs a higher level than the run allows) or `inconclusive` (tested, but the information needed is missing).
-- **category**: the failure category, copied from the catalog, or stated by the agent for `other`.
-- **severity**: `high`, `medium` or `low`; CI fails above a configured severity.
-- **severity_reason**: why the agent changed the catalog's default severity.
-- **title**: one-line summary for the report.
-- **evidence**: the step numbers of the tool results that show the proof, and a short summary. Required: no evidence, no finding (except `inconclusive`).
-- **recommendation**: the suggested fix, copied from the catalog.
-- **created_at, updated_at**: when the finding was first recorded and last replaced.
