@@ -2,6 +2,7 @@
 # Matching: a finding matches an entry when check and component are equal and, for entries
 # with dependencies, the finding's dependency is in the list. An entry counts as found when
 # at least one listed component is reported. Entries with verified: false are skipped.
+# components: ["*"] means every workload that discovery found in the run.
 
 app: online-boutique
 version: v0.10.4
@@ -12,16 +13,7 @@ weaknesses:
   - id: N1
     check: single-replica
     area: resilience
-    components:
-      [
-        adservice,
-        checkoutservice,
-        emailservice,
-        paymentservice,
-        recommendationservice,
-        redis-cart,
-        shippingservice,
-      ]
+    components: [checkoutservice, paymentservice, shippingservice, redis-cart]
     severity: medium
     level: disrupt
     origin: natural
@@ -45,7 +37,7 @@ weaknesses:
     severity: high
     level: probe
     origin: natural
-    verified: false
+    verified: true
     proof: a pod in another namespace connects to redis-cart.boutique:6379 and PING returns PONG (no NetworkPolicy, no password)
 
   - id: N4
@@ -166,8 +158,12 @@ expected_survivals:
     components: [frontend]
     dependencies: [emailservice]
     proof: emailservice down, checkout still succeeds
+  - id: S4
+    check: single-replica
+    components: [adservice, recommendationservice, emailservice]
+    proof: the only pod is killed; every journey keeps working, the page renders without that part
 
 unscored:
-  - check: missing-spread
-    components: [cartservice, productcatalogservice, currencyservice]
+  - check: missing-topology-spread
+    components: [cartservice, productcatalogservice, currencyservice, frontend]
     reason: replicas are spread today by scheduler scoring only; no reliable experiment proves it
