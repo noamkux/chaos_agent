@@ -1,0 +1,56 @@
+{{- /* Enforced by the API server for the disrupt server's ServiceAccount, whatever the server's own code does:
+what the RBAC rules allow (patch and update on everything) minus what must never be changed. */ -}}
+{{- if .Values.mcp.levels.disrupt.enabled }}
+{{- $name := printf "%s-mcp-disrupt-guard" .Release.Name }}
+{{- $sa := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "chaos-agent.mcp.fullname" (list . "disrupt")) }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+spec:
+  # A policy that cannot be evaluated denies the request.
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE", "DELETE", "CONNECT"]
+        # "*/*" matches every resource and every subresource.
+        resources: ["*/*"]
+  matchConditions:
+    - name: only-the-disrupt-server
+      expression: request.userInfo.username == {{ $sa | quote }}
+  variables:
+    - name: snapshotSecret
+      expression: >-
+        request.resource.group == "" && request.resource.resource == "secrets"
+        && request.namespace == {{ .Release.Namespace | quote }}
+  validations:
+    - expression: >-
+        variables.snapshotSecret || (!has(request.subResource) && (request.operation == "UPDATE"
+        || (request.operation == "DELETE" && request.resource.group == "" && request.resource.resource == "pods")))
+      message: "the disrupt server may only update objects, delete pods and manage its own snapshots"
+    - expression: >-
+        variables.snapshotSecret || !(request.resource.group == ""
+        && request.resource.resource in ["secrets", "persistentvolumeclaims", "serviceaccounts"])
+      message: "Secrets, PersistentVolumeClaims and ServiceAccounts can never be changed"
+    - expression: request.resource.group != "rbac.authorization.k8s.io"
+      message: "RBAC can never be changed"
+    - expression: >-
+        request.operation != "UPDATE" || request.resource.resource == "pods"
+        || !has(object.spec) || !has(object.spec.template) || !has(object.spec.template.spec)
+        || ({{ include "chaos-agent.mcp.podGuard" (list "object.spec.template.spec" "oldObject.spec.template.spec") | nindent 10 | trim }})
+      message: "a pod template change may not touch images, commands, args, security context, service account, host access or volumes"
+    - expression: >-
+        request.operation != "UPDATE" || request.resource.resource != "pods"
+        || ({{ include "chaos-agent.mcp.podGuard" (list "object.spec" "oldObject.spec") | nindent 10 | trim }})
+      message: "a pod change may not touch images, commands, args, security context, service account, host access or volumes"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+spec:
+  policyName: {{ $name }}
+  validationActions: [Deny]
+{{- end }}

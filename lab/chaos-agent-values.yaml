@@ -10,6 +10,9 @@ mcp:
   image:
     tag: dev
   allowedNamespaces: [boutique]
+  levels:
+    disrupt:
+      enabled: true
   nodeSelector:
     node-role.kubernetes.io/control-plane: ""
   tolerations:

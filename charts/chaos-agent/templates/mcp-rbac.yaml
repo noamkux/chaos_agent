@@ -34,3 +34,54 @@ subjects:
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{- /* The disrupt server also reads through the built-in view ClusterRole, and keeps snapshots as Secrets in its own namespace. */ -}}
+{{- if .Values.mcp.levels.disrupt.enabled }}
+{{- $name := include "chaos-agent.mcp.fullname" (list $root "disrupt") }}
+{{- range $namespace := .Values.mcp.allowedNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-view
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root "disrupt") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $root.Release.Namespace }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}-snapshots
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root "disrupt") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, get, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-snapshots
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root "disrupt") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}-snapshots
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

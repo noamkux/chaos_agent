@@ -46,8 +46,8 @@ SKIPPED_KINDS = {
     "coordination.k8s.io/Lease",
 }
 
-def listable_kinds():
-    """Every namespaced kind the API server can list, at its preferred version."""
+def namespaced_kinds():
+    """Every namespaced kind the API server can list, at its preferred version, keyed by group/Kind."""
     dynamic_client.resources.invalidate_cache()
     kinds = {}
     for resource in dynamic_client.resources.search():
@@ -55,10 +55,12 @@ def listable_kinds():
             continue
         if not resource.namespaced or "list" not in (resource.verbs or []):
             continue
-        kind = f"{resource.group or 'core'}/{resource.kind}"
-        if kind not in SKIPPED_KINDS:
-            kinds[kind] = resource
+        kinds[f"{resource.group or 'core'}/{resource.kind}"] = resource
     return kinds
+
+def listable_kinds():
+    """Every namespaced kind the inventory lists: namespaced_kinds() without SKIPPED_KINDS."""
+    return {kind: resource for kind, resource in namespaced_kinds().items() if kind not in SKIPPED_KINDS}
 
 def container_facts(container):
     """The settings resilience checks read from one container, as in the workload's YAML."""

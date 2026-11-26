@@ -57,6 +57,11 @@ spec:
               value: {{ join "," $root.Values.mcp.allowedNamespaces | quote }}
             - name: PORT
               value: {{ $root.Values.mcp.port | quote }}
+            # Where the disrupt server keeps its snapshots: its own namespace.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: mcp
               containerPort: {{ $root.Values.mcp.port }}

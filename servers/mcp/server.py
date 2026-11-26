@@ -1,5 +1,6 @@
 """Chaos agent MCP server. One codebase, deployed once per level; each pod exposes only its level's tools."""
 import os
+import disrupt
 import probe
 
 from mcp.server import MCPServer
@@ -12,7 +13,8 @@ LEVEL = os.environ["LEVEL"]
 TOOLS_BY_LEVEL = {
     "observe": [k8s.get_workloads, k8s.get_inventory],
     "probe": [probe.measure_journeys],
-    "disrupt": [],
+    "disrupt": [disrupt.snapshot_resource, disrupt.patch_resource, disrupt.restore_snapshot,
+                disrupt.delete_pod],
     
 }
 
