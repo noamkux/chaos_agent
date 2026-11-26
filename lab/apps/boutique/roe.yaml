@@ -12,6 +12,10 @@ allow_write_journeys: true
 # Draining a node evicts every pod on it, from every namespace. Allowed in the lab only.
 allow_node_actions: true
 
+# Workloads the agent may measure but never change or restart. For state that is not persisted:
+# redis-cart keeps every cart on an emptyDir, so one restart deletes all of them.
+protected_workloads: [redis-cart]
+
 # Limits per run.
 max_experiments: 15
 max_hold_s: 120

@@ -14,8 +14,11 @@ ALLOWED_LEVELS = {
 }
 
 # One MCP server pod per level; the server name is its level.
+# Local port-forwards until the orchestrator runs as a Job in the cluster (then from env, see the chart task).
 SERVERS = {
     "observe": "http://127.0.0.1:8081/mcp",
+    "probe": "http://127.0.0.1:8082/mcp",
+    "disrupt": "http://127.0.0.1:8083/mcp",
 }
 
 

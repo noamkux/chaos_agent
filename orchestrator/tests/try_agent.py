@@ -1,21 +1,24 @@
-"""First run of the agent loop against Online Boutique, observe level only."""
+"""A run of the agent against Online Boutique, with the lab's target.yaml and Rules of Engagement."""
 import asyncio
-
 import agent
 import db
 
+from pathlib import Path
+import run_config
+
 MODEL = "claude-haiku-5-5"
-ROE = {"scope": {"namespaces": ["boutique"]}}
-TASK = ("Study namespace 'boutique' and describe what you would break first to test its "
-        "resilience, and why.")
+LAB = Path(__file__).resolve().parents[2] / "lab" / "apps" / "boutique"
+TASK = "Find the weaknesses of the application in namespace 'boutique' by running experiments, and report them."
 
 
 async def main():
     with db.connect() as conn:
-        run_id = db.create_run(conn, "boutique", MODEL, "observe", ROE, 1)
+        roe = run_config.load_roe(LAB / "roe.yaml")
+        target = run_config.load_target(LAB / "target.yaml")
+        run_id = db.create_run(conn, "boutique", MODEL, roe["max_level"], roe, 1, profile=target)
         db.claim_run(conn, run_id)
         try:
-            summary = await agent.run_agent(conn, run_id, MODEL, "observe", ROE["scope"]["namespaces"], TASK)
+            summary = await agent.run_agent(conn, run_id, MODEL, roe, target, "boutique", TASK)
             db.finish_run(conn, run_id, "completed")
         except Exception as exc:
             db.finish_run(conn, run_id, "failed", str(exc))
@@ -40,6 +43,13 @@ def table(title, headers, rows):
 
 def print_run(conn, run_id):
     """Print what the run did: tool calls and token usage."""
+    experiments = conn.execute(
+        "SELECT step, input->'action'->>'type', input->'action'->>'name', output->>'verdict', output->>'error' "
+        "FROM steps WHERE run_id = %s AND name = 'run_experiment' ORDER BY step",
+        (run_id,),
+    ).fetchall()
+    table("Experiments", ["step", "action", "target", "verdict", "error"], experiments)
+
     calls = conn.execute(
         "SELECT name, count(*), count(*) FILTER (WHERE NOT allowed) FROM steps "
         "WHERE run_id = %s AND kind = 'tool' GROUP BY name ORDER BY min(step)",

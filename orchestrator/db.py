@@ -96,3 +96,23 @@ def record_llm_step(conn, run_id, model, output, tokens_in, tokens_out,
          cache_read_tokens, cache_write_tokens),
     )
     conn.commit()
+
+# --------- Undo ----------------
+
+def add_undo(conn, run_id, step_id, action):
+    """Record what must be restored, before the change it undoes is made. Returns the undo's id."""
+    row = conn.execute(
+        "INSERT INTO undo_actions (run_id, step_id, action) VALUES (%s, %s, %s) RETURNING id",
+        (run_id, step_id, Jsonb(action)),
+    ).fetchone()
+    conn.commit()
+    return row[0]
+
+
+def finish_undo(conn, undo_id, status):
+    """Mark an undo as done (restored) or failed (the restore did not work, the change is still in place)."""
+    conn.execute(
+        "UPDATE undo_actions SET status = %s, done_at = now() WHERE id = %s",
+        (status, undo_id),
+    )
+    conn.commit()

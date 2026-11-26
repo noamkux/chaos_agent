@@ -13,7 +13,7 @@ DEFAULT_DENY_GROUPS = ["argoproj.io", "fluxcd.io", "services.k8s.aws", "crosspla
 
 # The safe value of every optional RoE setting: an RoE that says nothing allows nothing extra.
 ROE_DEFAULTS = {"allow_write_journeys": False, "allow_node_actions": False,
-                "max_experiments": 10, "max_hold_s": 60}
+                "max_experiments": 10, "max_hold_s": 60, "protected_workloads": []}
 
 
 def load_yaml(path):
@@ -46,6 +46,9 @@ def load_roe(path):
     roe.setdefault("deny_groups", DEFAULT_DENY_GROUPS)
     if not isinstance(roe["deny_groups"], list) or not all(isinstance(g, str) for g in roe["deny_groups"]):
         raise ValueError(f"{path}: deny_groups must be a list of API groups")
+    protected = roe["protected_workloads"]
+    if not isinstance(protected, list) or not all(isinstance(w, str) and w for w in protected):
+        raise ValueError(f"{path}: protected_workloads must be a list of workload names")
     return roe
 
 
