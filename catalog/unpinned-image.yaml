@@ -5,7 +5,7 @@ category: misconfiguration
 summary: >
   An image uses a floating tag, so a restart or redeploy can run a different version
   than the one tested.
-applies_to: [Deployment, StatefulSet]
+applies_to: [Deployment, StatefulSet, DaemonSet]
 max_level: observe
 
 # Details: returned only by get_check

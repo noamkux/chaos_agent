@@ -5,7 +5,7 @@ category: excessive-load
 summary: >
   The liveness probe is too sensitive, so Kubernetes restarts pods that are only slow
   under load.
-applies_to: [Deployment, StatefulSet]
+applies_to: [Deployment, StatefulSet, DaemonSet]
 max_level: disrupt
 
 # Details: returned only by get_check

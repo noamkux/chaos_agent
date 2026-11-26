@@ -3,7 +3,7 @@ name: oom-under-load
 area: performance
 category: excessive-load
 summary: The container is killed for exceeding its memory limit under load.
-applies_to: [Deployment, StatefulSet]
+applies_to: [Deployment, StatefulSet, DaemonSet]
 max_level: disrupt
 
 # Details: returned only by get_check

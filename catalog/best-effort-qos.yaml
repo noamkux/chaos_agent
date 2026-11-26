@@ -5,7 +5,7 @@ category: shared-fate
 summary: >
   The pod has no resource requests, or requests far below its usage, so it is among the
   first to be evicted or starved when a node is under pressure.
-applies_to: [Deployment, StatefulSet]
+applies_to: [Deployment, StatefulSet, DaemonSet]
 max_level: observe
 
 # Details: returned only by get_check
