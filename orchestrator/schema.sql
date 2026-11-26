@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS steps (
     allowed      boolean      NOT NULL,
     tokens_in    int,
     tokens_out   int,
+    cache_read_tokens   int,
+    cache_write_tokens  int,
     cost_usd     numeric(8,4),
     started_at   timestamptz  NOT NULL DEFAULT now(),
     finished_at  timestamptz,

@@ -22,13 +22,58 @@ async def main():
             raise
 
         print(summary)
-        print()
-        rows = conn.execute(
-            "SELECT step, kind, name, allowed, tokens_in, tokens_out FROM steps WHERE run_id = %s ORDER BY step",
-            (run_id,),
-        )
-        for row in rows:
-            print(row)
+        print_run(conn, run_id)
+
+
+def table(title, headers, rows):
+    """Print rows as an aligned text table under a title."""
+    print(f"\n== {title} ({len(rows)}) ==")
+    if not rows:
+        return
+    rows = [[("" if cell is None else str(cell)) for cell in row] for row in rows]
+    widths = [max(len(str(h)), *(len(row[i]) for row in rows)) for i, h in enumerate(headers)]
+    print("  ".join(str(h).ljust(w) for h, w in zip(headers, widths)))
+    print("  ".join("-" * w for w in widths))
+    for row in rows:
+        print("  ".join(cell.ljust(w) for cell, w in zip(row, widths)))
+
+
+def print_run(conn, run_id):
+    """Print what the run did: findings, rejected reports, tool calls and token usage."""
+    findings = conn.execute(
+        """
+        SELECT status, check_name, component, dependency, severity, evidence->'steps'
+        FROM findings WHERE run_id = %s
+        ORDER BY array_position(ARRAY['confirmed', 'survived', 'not_proven', 'inconclusive'], status),
+                 check_name, component
+        """,
+        (run_id,),
+    ).fetchall()
+    table("Findings", ["status", "check", "component", "dependency", "severity", "evidence"], findings)
+
+    rejected = conn.execute(
+        "SELECT step, output->>'error' FROM steps "
+        "WHERE run_id = %s AND name = 'report_finding' AND NOT allowed ORDER BY step",
+        (run_id,),
+    ).fetchall()
+    table("Rejected reports", ["step", "error"], rejected)
+
+    calls = conn.execute(
+        "SELECT name, count(*), count(*) FILTER (WHERE NOT allowed) FROM steps "
+        "WHERE run_id = %s AND kind = 'tool' GROUP BY name ORDER BY min(step)",
+        (run_id,),
+    ).fetchall()
+    table("Tool calls", ["tool", "calls", "rejected"], calls)
+
+    usage = conn.execute(
+        "SELECT step, tokens_in, cache_read_tokens, cache_write_tokens, tokens_out FROM steps "
+        "WHERE run_id = %s AND kind = 'llm' ORDER BY step",
+        (run_id,),
+    ).fetchall()
+    table("LLM calls", ["step", "uncached in", "cache read", "cache write", "out"], usage)
+    uncached, read, write, out = (sum(row[i] or 0 for row in usage) for i in range(1, 5))
+    print(f"total: input {uncached + read + write} ({read} from cache, {write} written, "
+          f"{uncached} uncached), output {out}")
 
 
 asyncio.run(main())

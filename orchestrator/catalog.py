@@ -13,10 +13,10 @@ PROMPT_HEADER = """## Checks catalog
 
 These are known weaknesses. When a check applies to this system, you must test it.
 The catalog is a floor, not a limit: also look for weaknesses outside it, using the
-failure categories below, and report those as observations.
+failure categories below, and report those with report_finding, check_name 'other'.
 Each check shows the highest level that may be used to prove it (max_level).
 Before you test a check, call get_check(name) to read how to prove it.
-Report every result, confirmed or survived, with report_finding.
+Report every result with report_finding, whatever its status.
 
 Failure categories: single-point-of-failure, excessive-load, excessive-latency,
 misconfiguration, shared-fate.

@@ -136,8 +136,8 @@ def finish_step(conn, step_id, output):
     conn.commit()
 
 
-def record_llm_step(conn, run_id, model, output, tokens_in, tokens_out):
-
+def record_llm_step(conn, run_id, model, output, tokens_in, tokens_out,
+                    cache_read_tokens=0, cache_write_tokens=0):
     """Record one LLM call: the model's response and its token usage.
 
     Args:
@@ -145,15 +145,21 @@ def record_llm_step(conn, run_id, model, output, tokens_in, tokens_out):
         run_id: the run's id, from create_run.
         model: the model ID, stored as the step's name.
         output: the response blocks as dicts, including any tool_use blocks.
-        tokens_in: response.usage.input_tokens.
+        tokens_in: response.usage.input_tokens, the input after the last cache breakpoint.
         tokens_out: response.usage.output_tokens.
+        cache_read_tokens: response.usage.cache_read_input_tokens, input read from the cache.
+        cache_write_tokens: response.usage.cache_creation_input_tokens, input written to the cache.
+            The total input is the sum of the three; each is priced differently.
     """
     conn.execute(
         """
-        INSERT INTO steps (run_id, step, kind, name, output, allowed, tokens_in, tokens_out, finished_at)
-        VALUES (%s, (SELECT coalesce(max(step), 0) + 1 FROM steps WHERE run_id = %s), 'llm', %s, %s, true, %s, %s, now())
+        INSERT INTO steps (run_id, step, kind, name, output, allowed, tokens_in, tokens_out,
+                           cache_read_tokens, cache_write_tokens, finished_at)
+        VALUES (%s, (SELECT coalesce(max(step), 0) + 1 FROM steps WHERE run_id = %s), 'llm', %s, %s,
+                true, %s, %s, %s, %s, now())
         """,
-        (run_id, run_id, model, Jsonb(output), tokens_in, tokens_out),
+        (run_id, run_id, model, Jsonb(output), tokens_in, tokens_out,
+         cache_read_tokens, cache_write_tokens),
     )
     conn.commit()
 

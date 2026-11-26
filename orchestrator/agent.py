@@ -23,9 +23,12 @@ RUN_SECTION = """## This run
 Highest action level allowed in this run: {max_level}.
 For each check, use at most the lower of this level and the check's max_level.
 If proving a check needs a higher level than this run allows, report what you observed and say it was not proven.
+Report each result for every component it applies to, not for one example.
 Kinds that discovery could not read, so nothing is known about them: {unreadable}.
 
-Objects in scope, from discovery (step {discovery_steps}). Cite those steps as evidence for what exists or is missing:
+Objects in scope, from discovery (step {discovery_steps}). Cite those steps as evidence for what exists or is missing.
+It lists every kind in the namespace that has objects. A kind that is not listed and not unreadable has no objects: if policy/PodDisruptionBudget is not listed, there are no PDBs.
+Never listed: Secrets, and objects that controllers create (Pods, ReplicaSets, ControllerRevisions, Endpoints, EndpointSlices, Events, Leases).
 {inventory}"""
 
 CHECKS = catalog.load_catalog()
@@ -161,6 +164,10 @@ async def run_agent(conn, run_id, model, max_level, scope, task, focus=None):
     inventory, unreadable, discovery_steps = await discover_inventory(conn, run_id, allowed, scope)
     selected = catalog.select_checks(CHECKS, set(inventory), focus)
     components = {name for names in inventory.values() for name in names}
+    # Discovery belongs to the orchestrator: the model gets the inventory in the prompt, not the
+    # tool, so it cannot spend a call repeating it. A call it invents anyway is denied.
+    available = [tool for tool in available if tool["name"] != INVENTORY_TOOL]
+    allowed.discard(INVENTORY_TOOL)
     system = (SYSTEM_PROMPT + "\n\n" + catalog.render_index(selected)
           + "\n" + RUN_SECTION.format(max_level=max_level, unreadable=format_unreadable(unreadable),
                                       discovery_steps=", ".join(map(str, discovery_steps)),
@@ -184,11 +191,15 @@ async def run_agent(conn, run_id, model, max_level, scope, task, focus=None):
             tools=available,   
             system=system,
             messages=messages,
+            # Automatic caching: the breakpoint moves to the last block as the conversation grows.
+            cache_control={"type": "ephemeral"},
             
         )
         # Converts the block of the answer to dicts 
         content = [block.model_dump(mode="json", exclude_none=True) for block in response.content]
-        db.record_llm_step(conn, run_id, model, content, response.usage.input_tokens, response.usage.output_tokens)
+        usage = response.usage
+        db.record_llm_step(conn, run_id, model, content, usage.input_tokens, usage.output_tokens,
+                           usage.cache_read_input_tokens or 0, usage.cache_creation_input_tokens or 0)
         if response.stop_reason == "max_tokens":
             # A cut-off response cannot be used: a truncated tool call cannot be run.
             raise RuntimeError(f"the model's response was cut off at max_tokens={MAX_TOKENS}")
