@@ -7,9 +7,11 @@ try:
     config.load_incluster_config()
 except config.ConfigException:
     config.load_kube_config()
-
+# Deployments, StatefulSets
 apps = client.AppsV1Api()
+# Services, Pods, Events
 core = client.CoreV1Api()
+# Ingress, NetworkPolicy
 networking = client.NetworkingV1Api()
 
 def get_workloads(namespace: str) -> list[dict]:
@@ -20,7 +22,12 @@ def get_workloads(namespace: str) -> list[dict]:
     return workloads
 
 def summarize(workload, kind):
-    """Keep only the settings that resilience checks look at."""
+    """Keep only the settings that resilience checks look at.
+
+    Args:
+        workload: a Deployment or StatefulSet object from the Kubernetes API.
+        kind: "Deployment" or "StatefulSet"; objects in list responses do not carry their kind.
+    """
     pod = workload.spec.template.spec
     container = pod.containers[0]
     return {
@@ -53,5 +60,9 @@ def get_inventory(namespace: str) -> dict[str, list[str]]:
     }
 
 def names(resource_list):
-    """Sorted names from a Kubernetes list response."""
+    """Sorted names from a Kubernetes list response.
+
+    Args:
+        resource_list: the response of a list_namespaced_* call.
+    """
     return sorted(item.metadata.name for item in resource_list.items)

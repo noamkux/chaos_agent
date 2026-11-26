@@ -2,6 +2,17 @@
 
 An AI agent that tests the resilience of any application on Kubernetes within defined Rules of Engagement, proves each weakness with a controlled experiment, and reports what broke, what survived and how to fix it.
 
+all of this live with Rules Of Engagment that the client supply and the agent needs to stick to
+
+the agent have a catlog of things he have to check, they contain common K8S problem, the agent gets index of the catalog and after the discovery process he asks for the relvent items from the catalog
+the catlog follows AWS categories of fauilre
+- single point of failure
+- excessive load
+- exssissve latency
+- Shared Fate
+- Misconfiguration and bugs
+
+
 ## Lab environment
 
 The lab is a local cluster that simulates a customer environment. `lab/up.sh` brings all of it up with one command.

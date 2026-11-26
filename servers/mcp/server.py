@@ -17,6 +17,7 @@ TOOLS_BY_LEVEL = {
 
 mcp = MCPServer(f"chaos-agent-{LEVEL}")
 
+# like @mcp.tool() but in a loop
 for tool in TOOLS_BY_LEVEL[LEVEL]:
     mcp.tool()(tool)
 

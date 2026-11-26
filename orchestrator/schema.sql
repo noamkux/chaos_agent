@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS findings (
     run_id          bigint       NOT NULL REFERENCES runs (id),
     check_name      text         NOT NULL,
     component       text         NOT NULL,
+    /* dependency for checks that the target are diffrent service that depends on each other*/
     dependency      text,
     status          text         NOT NULL CHECK (status IN ('confirmed', 'survived')),
     severity        text         NOT NULL CHECK (severity IN ('high', 'medium', 'low')),

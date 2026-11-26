@@ -26,7 +26,17 @@ Checks that apply to this system (name | category | max_level | summary):
 
 
 def load_catalog(directory=CATALOG_DIR):
-    """Read every check file. Returns a dict from check name to check."""
+    """Read every check file.
+
+    Args:
+        directory: folder with one YAML file per check; defaults to catalog/ at the repo root.
+
+    Returns:
+        A dict from check name to check.
+
+    Raises:
+        ValueError: a file is missing fields, or its name does not match the file name.
+    """
     checks = {}
     for path in sorted(directory.glob("*.yaml")):
         check = yaml.safe_load(path.read_text())
@@ -40,7 +50,16 @@ def load_catalog(directory=CATALOG_DIR):
 
 
 def select_checks(checks, present_kinds, focus=None):
-    """Keep the checks that apply to resources in the system and match the run's focus."""
+    """Keep the checks that apply to resources in the system and match the run's focus.
+
+    Args:
+        checks: all checks, from load_catalog.
+        present_kinds: the kinds found by discovery, for example {"Deployment", "Service"}.
+        focus: optional dict; its checks and areas only narrow the selection, never widen it.
+
+    Returns:
+        A dict from check name to check, with only the selected checks.
+    """
     focus = focus or {}
     selected = {}
     for name, check in checks.items():
@@ -55,14 +74,24 @@ def select_checks(checks, present_kinds, focus=None):
 
 
 def render_index(selected):
-    """Build the catalog section of the system prompt, sorted by name so it is identical across runs."""
+    """Build the catalog section of the system prompt, sorted by name so it is identical across runs.
+
+    Args:
+        selected: the checks from select_checks.
+
+    Returns:
+        The prompt section. Sorted because prompt caching matches a prefix, so the same
+        checks must always produce the same text (like Docker layer caching).
+    """
     lines = [f"- {name} | {check['category']} | {check['max_level']} | {check['summary'].strip()}"
              for name, check in sorted(selected.items())]
     return PROMPT_HEADER + "\n".join(lines) + "\n"
 
 
+GET_CHECK_NAME = "get_check"
+
 GET_CHECK_TOOL = {
-    "name": "get_check",
+    "name": GET_CHECK_NAME,
     "description": ("Return the details of one check from the catalog: how to prove it, "
                     "when it counts as confirmed or survived, and the fix."),
     "input_schema": {
@@ -76,7 +105,15 @@ GET_CHECK_TOOL = {
 
 
 def get_check(selected, name):
-    """Return the details of one selected check, or an error the model can act on."""
+    """Return the details of one selected check, or an error the model can act on.
+
+    Args:
+        selected: the checks chosen for this run; checks left out by focus cannot be read.
+        name: the check name the model asked for.
+
+    Returns:
+        The check's name and DETAIL_FIELDS, or {"error": ...} for an unknown name.
+    """
     if name not in selected:
         return {"error": f"unknown check '{name}'. Use a name from the catalog list."}
     check = selected[name]
