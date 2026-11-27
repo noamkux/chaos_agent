@@ -1,0 +1,17 @@
+# An application profile for the unit tests. No measurement section: the loader must fill every default.
+app: shop
+entrypoint:
+  service: web
+  port: 8080
+journeys:
+  - name: home
+    steps:
+      - {method: GET, path: /}
+  - name: checkout
+    writes: true
+    steps:
+      - {method: POST, path: /cart, form: {item: "1"}}
+      - {method: POST, path: /checkout}
+steady_state:
+  success_rate: 0.99
+  p95_ms: 500

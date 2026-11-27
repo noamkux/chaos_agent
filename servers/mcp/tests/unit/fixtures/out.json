@@ -1,0 +1,11 @@
+{"type":"Metric","data":{"name":"journey_ok","type":"counter"},"metric":"journey_ok"}
+{"type":"Point","metric":"http_req_duration","data":{"time":"2026-11-27T10:00:00Z","value":12,"tags":{"journey":"home","scenario":"home"}}}
+{"type":"Point","metric":"journey_duration","data":{"time":"2026-11-27T10:00:00Z","value":10,"tags":{"journey":"home","second":"0","scenario":"home"}}}
+{"type":"Point","metric":"journey_ok","data":{"time":"2026-11-27T10:00:00Z","value":1,"tags":{"journey":"home","second":"0","scenario":"home"}}}
+{"type":"Point","metric":"journey_duration","data":{"time":"2026-11-27T10:00:00Z","value":30,"tags":{"journey":"home","second":"0","scenario":"home"}}}
+{"type":"Point","metric":"journey_ok","data":{"time":"2026-11-27T10:00:00Z","value":1,"tags":{"journey":"home","second":"0","scenario":"home"}}}
+{"type":"Point","metric":"journey_duration","data":{"time":"2026-11-27T10:00:11Z","value":10002,"tags":{"journey":"checkout","second":"1","scenario":"checkout"}}}
+{"type":"Point","metric":"journey_failed","data":{"time":"2026-11-27T10:00:11Z","value":1,"tags":{"journey":"checkout","second":"1","scenario":"checkout","error":"timeout"}}}
+{"type":"Point","metric":"journey_duration","data":{"time":"2026-11-27T10:00:01Z","value":5,"tags":{"journey":"checkout","second":"1","scenario":"checkout"}}}
+{"type":"Point","metric":"journey_failed","data":{"time":"2026-11-27T10:00:01Z","value":1,"tags":{"journey":"checkout","second":"1","scenario":"checkout","error":"http 500"}}}
+{"type":"Point","metric":"dropped_iterations","data":{"time":"2026-11-27T10:00:02Z","value":2,"tags":{"scenario":"checkout"}}}

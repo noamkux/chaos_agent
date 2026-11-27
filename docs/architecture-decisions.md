@@ -63,7 +63,7 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | # | Decision | Status |
 |---|---|---|
 | [0030](#adr-0030) | Node and zone failures: a drain mode and a lost mode, set by node_actions in the RoE | Accepted |
-| [0031](#adr-0031) | Pending undos are restored when the orchestrator starts | Proposed |
+| [0031](#adr-0031) | Pending undos are restored when the orchestrator starts | Accepted |
 | [0032](#adr-0032) | The eval compares the agent with a deterministic baseline, on a weak and a hardened application | Proposed |
 | [0033](#adr-0033) | Retrieval over past experiments, so a run builds on the ones before it | Proposed |
 | [0034](#adr-0034) | GitHub Actions runs the cheap checks on every change | Proposed |
@@ -1065,7 +1065,7 @@ Option 2.
 
 ### Consequences
 - **Gains:** in the run of 2026-11-27 there were no scale-to-zero experiments, two findings were reproduced (productcatalog, shipping), every experiment was cited by step, and the hidden cart-to-shipping coupling was reported with a clear note that the call path was inferred.
-- **Trade-offs:** reproduction costs experiments from the budget. The prompt still cannot make the agent test what it has no tool for (zones, latency): that needs ADR-0030 and Chaos Mesh. A later version should name the real-world event each experiment simulates (a node failing, a zone going down, a bad rollout).
+- **Trade-offs:** reproduction costs experiments from the budget. The prompt still cannot make the agent test what it has no tool for (zones, latency): that needs ADR-0030 and Chaos Mesh. Added later the same day, with node failures (ADR-0030): every hypothesis names the real-world event it simulates (a pod crashing, a node or zone going down, a bad rollout, a dependency slowing down or down for every caller); scaling to 0 is framed as testing the callers; Placement is used to find what a node or zone failure would take down; and the next experiment is planned on where pods landed, from placement_events.
 
 ### In the code
 - `orchestrator/agent.py`: `SYSTEM_PROMPT`, the Method bullets and the summary structure; `format_profile` (the measurement line, so the model knows a 10 s timeout is ours).
@@ -1210,7 +1210,7 @@ Every action so far works on objects in the tested namespaces. None of them test
 
 ## ADR-0031: Pending undos are restored when the orchestrator starts
 
-**Status:** Proposed, 2026-11-27
+**Status:** Accepted, 2026-11-27
 **Related:** ADR-0006 (Postgres), ADR-0017 (write-ahead undo), ADR-0030 (node failure)
 
 ### Context
@@ -1222,14 +1222,20 @@ The undo log is written before every change (ADR-0017), but nothing runs a pendi
 3. **A watchdog** (a CronJob or a small controller) that restores changes past their deadline even if the orchestrator never comes back. The strongest, and a separate component to build and secure.
 
 ### Decision
-Option 2 now; option 3 in the backlog. Undos are run through the same `call_tool` path, so they are recorded as steps.
+Option 2 now; option 3 in the backlog. Undos are run through the same `call_tool` path, so they are recorded as steps of the new run.
+- **A failed undo stays pending,** and the run does not start. Marking it failed would let the next run start while the change is still in the cluster; pending means every start tries again until it works or a person fixes it.
+- **A snapshot that no longer exists was already restored:** `restore_snapshot` deletes its snapshot only after the object was put back, so a crash between the restore and `finish_undo` leaves an undo whose snapshot is gone. A 404 on reading the snapshot counts as done. `restore_node` is idempotent, and treats a node that no longer exists as done.
+- **An undo whose tool this run does not load** (an observe-level run after a disrupt run crashed) stops the run with the undo and the tool named.
 
 ### Consequences
 - **Gains:** a crash and a restart always end with the cluster restored, or with the run refusing to start until someone looks.
 - **Trade-offs:** if the orchestrator is never started again, nothing is restored. An undo whose target was changed by someone else meanwhile will fail on its `resourceVersion` precondition, which is correct but needs a person.
 
 ### In the code
-- Not built yet. Planned in `orchestrator/agent.py` or a new `orchestrator/undo.py`, called before the first step of a run; `orchestrator/db.py` gets a query for pending undos.
+- `orchestrator/undo.py`: `restore_pending`, `already_restored`.
+- `orchestrator/db.py`: `pending_undos`.
+- `orchestrator/agent.py`: `run_agent` calls `undo.restore_pending` right after loading the tools; `orchestrator/tests/try_experiment.py` does the same.
+- **Not solved:** a run killed without a chance to finish (kill -9, a laptop going to sleep) stays `running` in `runs`, and holds the namespace lock (`one_running_run_per_namespace`). `try_agent` does not check `claim_run`'s answer today, so the lab is not blocked; a real entry point must clear stale runs.
 
 
 ---

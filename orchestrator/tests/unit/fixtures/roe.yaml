@@ -1,0 +1,13 @@
+# Rules of Engagement for the unit tests: an invented application, so the tests check the code and not
+# the lab. Every key a loader checks is here, with a value that is not its default.
+scope:
+  namespaces: [shop]
+max_level: disrupt
+allow_write_journeys: true
+node_actions: scope_only
+protected_workloads: [db]
+max_experiments: 5
+max_restore_after_s: 90
+deny:
+  - argoproj.io/Application
+  - fluxcd.io

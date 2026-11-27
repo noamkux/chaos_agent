@@ -9,6 +9,7 @@ import db
 import run_config
 import runner
 import tools
+import undo
 
 LAB = Path(__file__).resolve().parents[2] / "lab" / "apps" / "boutique"
 
@@ -62,6 +63,9 @@ async def main():
         print(f"run {run_id}")
         try:
             server_tools = {t["name"] for t in await tools.load_tools(roe["max_level"])}
+            restored = await undo.restore_pending(conn, run_id, server_tools, scope)
+            if restored:
+                print(f"restored what an earlier run left changed: steps {restored}")
             missing = runner.EXPERIMENT_TOOLS - server_tools
             if missing:
                 raise RuntimeError(f"server tools missing: {sorted(missing)}")

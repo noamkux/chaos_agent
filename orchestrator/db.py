@@ -109,6 +109,13 @@ def add_undo(conn, run_id, step_id, action):
     return row[0]
 
 
+def pending_undos(conn):
+    """Every undo not yet done, from any run, oldest first: (id, run_id, action)."""
+    return conn.execute(
+        "SELECT id, run_id, action FROM undo_actions WHERE status = 'pending' ORDER BY id"
+    ).fetchall()
+
+
 def finish_undo(conn, undo_id, status):
     """Mark an undo as done (restored) or failed (the restore did not work, the change is still in place)."""
     conn.execute(

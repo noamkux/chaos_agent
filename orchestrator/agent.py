@@ -5,6 +5,7 @@ import node_failure
 import runner
 import db
 import tools
+import undo
 
 from anthropic import AsyncAnthropic
 
@@ -19,7 +20,10 @@ The orchestrator runs your experiments: it measures the user journeys before, du
 Method:
 - Start from the facts below: what runs, with how many replicas, and which workloads call which. Environment variable names often point at the Services a workload calls.
 - Form a hypothesis, then run one experiment that changes one thing.
-- Scaling a component to 0 shows which journeys depend on it; do it at most once per component. Then prefer partial changes that degrade it: fewer replicas, one pod deleted, tighter CPU or memory limits, a slower or stricter readiness probe. Weaknesses users would feel are usually in how the system behaves when a dependency is slow or partly down, not when it is gone.
+- Every experiment simulates something that happens in production: name the event in the hypothesis (a pod crashing, a node or a zone going down, a bad rollout, a dependency slowing down, a dependency down for every caller after a bad deploy). Prefer the events most likely to happen to this application.
+- Scaling a component to 0 simulates it being down for every caller at once: it tests the callers (their timeouts and fallbacks), not the component, and shows which journeys depend on it. Do it at most once per component. Then prefer partial changes that degrade it: fewer replicas, one pod deleted, tighter CPU or memory limits, a slower or stricter readiness probe. Weaknesses users would feel are usually in how the system behaves when a dependency is slow or partly down, not when it is gone.
+- When node failures are allowed, use Placement to find what losing one node or one zone would take down: workloads whose pods all share a node or a zone, and whether their pods could run elsewhere (nodeAffinity, nodeSelector, topology spread constraints in the workload facts). A node failure tests whether the system heals on its own while the node is down: recovery is counted from the action, not the restore. In a cluster with an autoscaler, leave restore_after_s time for a new node to join.
+- Pods that were rescheduled stay where they landed, so Placement is only true until the first experiment that moves pods: after a node failure, its placement_events show where they went; plan the next experiment on that placement, not on the first one.
 - A change to a workload's pod template (resources, probes, env) restarts all of its pods: that rollout is part of what you measure.
 - Read the timeline and the errors: how the journeys failed (timeouts or fast errors), for how long, and how fast they recovered.
 - Choose the next experiment from what you learned. Follow up on surprises: when something breaks, find which component is to blame; when something holds, find out why.
@@ -170,6 +174,8 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
     scope = roe["scope"]["namespaces"]
     # Every server tool this run's level allows. Only the orchestrator calls them.
     server_tools = {t["name"] for t in await tools.load_tools(max_level)}
+    # Before anything else: undo what an earlier run left changed.
+    await undo.restore_pending(conn, run_id, server_tools, scope)
     inventory, unreadable, discovery_steps = await discover_inventory(conn, run_id, server_tools, scope)
     workloads, workload_steps = await collect_workloads(conn, run_id, server_tools, scope)
     placement, placement_steps = await collect_placement(conn, run_id, server_tools, scope)
