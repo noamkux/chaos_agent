@@ -34,8 +34,10 @@ spec:
       serviceAccountName: {{ $name }}
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
+        # 65532 is nonroot in the Chainguard base image (the same UID as distroless). It must match the
+        # image's /etc/passwd, or Python has no user name and no home directory.
+        runAsUser: 65532
+        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       {{- with $root.Values.mcp.nodeSelector }}
