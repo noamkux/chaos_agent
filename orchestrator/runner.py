@@ -33,7 +33,9 @@ def run_experiment_tool(namespaces, journey_names):
             "is steady, makes the change, keeps measuring the journeys you chose, restores the change after "
             "restore_after_s seconds, and judges the result against the steady state: broke, withstood or "
             "inconclusive. If the system does not get steady before the change, nothing is changed and the "
-            "experiment is not counted: not_run. "
+            "experiment is not counted: not_run. inconclusive means the change was made and "
+            "counted, but a journey was not steady in the seconds just before it, so the result cannot be "
+            "judged; its before_action timeline shows those seconds. "
             "Actions: patch (a strategic merge patch on any object in scope; it is snapshotted first and "
             "restored after restore_after_s) and delete_pod (one running pod of a workload; its controller replaces "
             "it, nothing is restored). The timeline has one character per second: . ok, s slow, x failed, "
@@ -98,8 +100,9 @@ def check(args, roe, target, done):
 
 
 def without_warmup(measurement, warmup):
-    """A steady check without its warm-up seconds, renumbered from 0."""
-    return {"measure_for_s": measurement["measure_for_s"] - warmup,
+    """A measurement without its warm-up seconds, renumbered from 0, with started_at moved to match."""
+    return {"started_at": measurement["started_at"] + warmup,
+            "measure_for_s": measurement["measure_for_s"] - warmup,
             "not_sent": measurement["not_sent"],
             "seconds": [{**s, "second": s["second"] - warmup}
                         for s in measurement["seconds"] if s["second"] >= warmup]}
@@ -140,10 +143,10 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
     """Run one experiment from the model's plan. Recorded in steps as run_experiment, with every server call
     as its own step. Returns JSON text for the tool_result."""
     error = check(args, roe, target, state["experiments"])
-    step_id, _ = db.start_step(conn, run_id, RUN_EXPERIMENT_NAME, args, allowed=error is None)
+    step_id, step = db.start_step(conn, run_id, RUN_EXPERIMENT_NAME, args, allowed=error is None)
     if error:
         db.finish_step(conn, step_id, {"error": error})
-        return json.dumps({"error": error})
+        return json.dumps({"step": step, "error": error})
 
     scope = roe["scope"]["namespaces"]
     action = args["action"]
@@ -164,8 +167,9 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
                               "fail_request_after_s": settings["fail_request_after_s"]})
 
     def finish(result):
+        """Record the result, and return it to the model with the experiment's own step to cite."""
         db.finish_step(conn, step_id, result)
-        return json.dumps(result)
+        return json.dumps({"step": step, **result})
 
     # 1. Steady check: nothing is touched, and the experiment is not counted, until the system is steady.
     baseline, check_steps, problem = await wait_for_steady(measure, list(journeys), steady, settings)
@@ -175,9 +179,12 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
     state["experiments"] += 1
 
     # 2. Measure in the background, through the action, the time it stays and the recovery.
+    # Its warm-up is thrown away before judging, as in the steady check: every run of k6 starts cold.
+    warmup = settings["warmup_ignored_s"]
     before_action = settings["measure_before_action_s"]
-    measuring = asyncio.create_task(measure(before_action + restore_after + settings["measure_after_restore_s"]))
-    await asyncio.sleep(before_action)
+    measuring = asyncio.create_task(
+        measure(warmup + before_action + restore_after + settings["measure_after_restore_s"]))
+    await asyncio.sleep(warmup + before_action)
     restore_time = None
 
     # 3. The action. For a patch, the snapshot and its undo are written before the change.
@@ -222,7 +229,7 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
     if measured["is_error"]:
         return finish({"verdict": "inconclusive", "reason": f"measurement failed: {measured['content']}",
                        "steps": steps})
-    measurement = measured["content"]
+    measurement = without_warmup(measured["content"], warmup)
     result = experiment.judge(baseline, measurement, list(journeys), steady,
                               second_of(action_time, measurement),
                               second_of(restore_time, measurement) if restore_time else None)

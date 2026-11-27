@@ -131,8 +131,8 @@ def judge(baseline, measurement, journeys, steady_state, action_second, restore_
         restore_second: the second of the restore, or None for an action with nothing to restore.
 
     Returns:
-        {"verdict": "inconclusive", "reason", "baseline": timeline per journey} if any second before
-        the action was not ok. Otherwise {"verdict": "broke" or "withstood", "journeys": per journey
+        {"verdict": "inconclusive", "reason", "baseline" and "before_action": timeline per journey} if
+        any second before the action was not ok. Otherwise {"verdict": "broke" or "withstood", "journeys": per journey
         its timeline, baseline and after_action totals, broken_s, not_sent and recovered_after_s}.
         broke means at least MIN_BROKEN_S bad seconds after the action, journeys not sent, or no
         recovery by the end of the measurement.
@@ -144,7 +144,9 @@ def judge(baseline, measurement, journeys, steady_state, action_second, restore_
         if any(status != "ok" for status in before):
             return {"verdict": "inconclusive",
                     "reason": f"journey '{journey}' was not steady before the action",
-                    "baseline": {j: timeline(statuses_of(baseline, j, steady_state), set()) for j in journeys}}
+                    "baseline": {j: timeline(statuses_of(baseline, j, steady_state), set()) for j in journeys},
+                    "before_action": {j: timeline(statuses_of(measurement, j, steady_state)[:action_second], set())
+                                      for j in journeys}}
         # A patch is restored before the system can recover; a deleted pod is replaced on its own.
         recover_from = restore_second if restore_second is not None else action_second
         recovered = recovered_at(statuses, recover_from)
