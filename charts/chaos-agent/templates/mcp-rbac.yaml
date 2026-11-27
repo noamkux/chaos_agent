@@ -85,3 +85,53 @@ subjects:
     name: {{ $name }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
+
+{{- /* The observe server reads the namespaces through the built-in view ClusterRole (no Secrets),
+and nodes cluster-wide (read only), to know which node and zone every pod runs on. */ -}}
+{{- if .Values.mcp.levels.observe.enabled }}
+{{- $name := include "chaos-agent.mcp.fullname" (list $root "observe") }}
+{{- range $namespace := .Values.mcp.allowedNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}-view
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root "observe") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $root.Release.Namespace }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-nodes
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root "observe") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-nodes
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root "observe") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-nodes
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

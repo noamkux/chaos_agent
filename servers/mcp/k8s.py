@@ -163,3 +163,89 @@ def get_inventory(namespace: str) -> dict[str, dict]:
             kinds[kind] = sorted(item.metadata.name for item in items)
     return {"kinds": kinds, "unreadable": unreadable}
 
+
+# The standard labels every cloud provider and kind set on nodes.
+ZONE_LABEL = "topology.kubernetes.io/zone"
+CONTROL_PLANE_LABEL = "node-role.kubernetes.io/control-plane"
+
+def node_facts(node):
+    """A node's zone and whether pods can run on it."""
+    labels = node.metadata.labels or {}
+    ready = next((c.status == "True" for c in node.status.conditions or [] if c.type == "Ready"), False)
+    return {
+        "name": node.metadata.name,
+        "zone": labels.get(ZONE_LABEL),
+        "control_plane": CONTROL_PLANE_LABEL in labels,
+        "schedulable": not node.spec.unschedulable,
+        "ready": ready,
+        "taints": sorted(f"{t.key}:{t.effect}" for t in node.spec.taints or []),
+    }
+
+def kind_of(api_version, kind):
+    """group/Kind from an apiVersion and a kind: apps/v1 and Deployment give apps/Deployment, v1 and Pod give core/Pod."""
+    group = api_version.rpartition("/")[0] or "core"
+    return f"{group}/{kind}"
+
+def controller_of(references):
+    """The controlling owner in a list of ownerReferences, as (apiVersion, kind, name), or None.
+    Takes the dicts of an object read with the dynamic client (camelCase keys)."""
+    reference = next((r for r in references or [] if r.get("controller")), None)
+    return reference and (reference["apiVersion"], reference["kind"], reference["name"])
+
+def top_owner(namespace, pod, owners_cache):
+    """The workload at the top of a pod's ownerReferences, as (group/Kind, name): the object that no
+    controller owns. Works for any controller: a Deployment through its ReplicaSet, an Argo Rollout,
+    a CronJob through its Job, an operator's custom resource. A pod with no owner is its own workload.
+    If an owner cannot be read, the chain stops at the last owner that is known."""
+    reference = controller_of(serialize(pod.metadata).get("ownerReferences"))
+    if reference is None:
+        return "core/Pod", pod.metadata.name
+    while True:
+        if reference not in owners_cache:
+            api_version, kind, name = reference
+            try:
+                resource = dynamic_client.resources.get(api_version=api_version, kind=kind)
+                owner = dynamic_client.get(resource, name=name, namespace=namespace).to_dict()
+                owners_cache[reference] = controller_of(owner["metadata"].get("ownerReferences"))
+            except Exception:
+                # An owner we cannot read (no permission, a kind the API no longer serves) ends the chain.
+                owners_cache[reference] = None
+        parent = owners_cache[reference]
+        if parent is None:
+            api_version, kind, name = reference
+            return kind_of(api_version, kind), name
+        reference = parent
+
+def get_placement(namespace: str) -> dict[str, list]:
+    """Where the workloads of a namespace run: every node of the cluster with its zone, and the node and zone of every pod of each workload.
+
+    "nodes" has every node: its zone (from the topology.kubernetes.io/zone label, null if the node has
+    none), whether it is a control-plane node, whether new pods can be scheduled on it, whether it is
+    Ready, and its taints as key:effect. If nodes cannot be read, "nodes" is empty and
+    "nodes_unreadable" has the reason.
+    "workloads" has every workload with pods in the namespace, found by following each pod's
+    ownerReferences to the top (apps/Deployment, argoproj.io/Rollout, batch/CronJob, any operator's
+    kind; core/Pod for a pod no controller owns), and for each pod its node, zone and phase. A pod
+    with node null is not scheduled yet (Pending).
+    """
+    check_scope(namespace)
+    result = {"nodes": [], "workloads": []}
+    try:
+        nodes = [node_facts(n) for n in core.list_node().items]
+    except ApiException as error:
+        nodes = []
+        result["nodes_unreadable"] = f"{error.status} {error.reason}"
+    result["nodes"] = sorted(nodes, key=lambda n: n["name"])
+    zone_of = {n["name"]: n["zone"] for n in nodes}
+
+    owners_cache = {}
+    pods_of = {}
+    for pod in core.list_namespaced_pod(namespace).items:
+        workload = top_owner(namespace, pod, owners_cache)
+        node = pod.spec.node_name
+        pods_of.setdefault(workload, []).append(
+            {"node": node, "zone": zone_of.get(node), "phase": pod.status.phase})
+    result["workloads"] = [{"kind": kind, "name": name,
+                            "pods": sorted(pods, key=lambda p: (p["node"] or "", p["phase"]))}
+                           for (kind, name), pods in sorted(pods_of.items())]
+    return result

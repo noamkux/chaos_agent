@@ -6,11 +6,6 @@ import yaml
 LEVELS = ["observe", "probe", "disrupt"]
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}
 
-# Used when the RoE leaves out deny_groups. Their controllers act outside the namespace or the cluster,
-# where a snapshot cannot restore anything: GitOps, cloud resources, backups, database operators.
-DEFAULT_DENY_GROUPS = ["argoproj.io", "fluxcd.io", "services.k8s.aws", "crossplane.io", "upbound.io",
-                       "cnrm.cloud.google.com", "azure.com", "velero.io", "cnpg.io"]
-
 # The safe value of every optional RoE setting: an RoE that says nothing allows nothing extra.
 ROE_DEFAULTS = {"allow_write_journeys": False, "allow_node_actions": False,
                 "max_experiments": 10, "max_restore_after_s": 60, "protected_workloads": []}
@@ -51,9 +46,13 @@ def load_roe(path):
     for key in ("max_experiments", "max_restore_after_s"):
         if not positive_int(roe[key]):
             raise ValueError(f"{path}: {key} must be a whole number above 0")
-    roe.setdefault("deny_groups", DEFAULT_DENY_GROUPS)
-    if not isinstance(roe["deny_groups"], list) or not all(isinstance(g, str) for g in roe["deny_groups"]):
-        raise ValueError(f"{path}: deny_groups must be a list of API groups")
+    # No default: what the agent may not touch is the RoE owner's decision, and it must be made on purpose.
+    if "deny" not in roe:
+        raise ValueError(f"{path}: deny is required: the API groups and group/Kinds the agent may never "
+                         "change, or deny: [] to deny nothing beyond what the disrupt server always refuses")
+    if not isinstance(roe["deny"], list) or not all(isinstance(d, str) and d for d in roe["deny"]):
+        raise ValueError(f"{path}: deny must be a list of API groups (argoproj.io) or group/Kinds "
+                         "(argoproj.io/Application)")
     protected = roe["protected_workloads"]
     if not isinstance(protected, list) or not all(isinstance(w, str) and w for w in protected):
         raise ValueError(f"{path}: protected_workloads must be a list of workload names")
@@ -102,7 +101,15 @@ def load_target(path):
     return target
 
 
-def denied_group(kind, deny_groups):
-    """True if a group/Kind belongs to a denied API group or to one of its subgroups."""
+def denied(kind, deny):
+    """True if the RoE denies a group/Kind. An entry with a / denies that exact kind
+    (argoproj.io/Application); an entry without one denies a whole API group and its subgroups
+    (argoproj.io also denies workflows.argoproj.io, and not notargoproj.io)."""
     group = kind.partition("/")[0]
-    return any(group == denied or group.endswith("." + denied) for denied in deny_groups)
+    for entry in deny:
+        if "/" in entry:
+            if kind == entry:
+                return True
+        elif group == entry or group.endswith("." + entry):
+            return True
+    return False

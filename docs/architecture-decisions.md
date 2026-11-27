@@ -40,7 +40,8 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | [0015](#adr-0015) | A few generic disrupt tools instead of a tool per fault | Accepted |
 | [0016](#adr-0016) | A denylist, not an allowlist, enforced in the server and in the API server | Accepted |
 | [0017](#adr-0017) | Snapshots are Secrets in chaos-system, restored by replace, with a write-ahead undo log | Accepted |
-| [0018](#adr-0018) | API groups whose controllers act outside the namespace are denied by default | Accepted |
+| [0018](#adr-0018) | API groups whose controllers act outside the namespace are denied by default | Superseded by 0035 |
+| [0035](#adr-0035) | What the agent may not change is set only by the RoE, by API group or by group/Kind | Accepted |
 | [0019](#adr-0019) | Data stores are protected only through protected_workloads in the RoE | Accepted |
 | [0020](#adr-0020) | Three inputs with three owners: target.yaml, the RoE, and the chart values | Accepted |
 | [0028](#adr-0028) | The MCP image and pods are locked down: pinned digests, hashed dependencies, non-root, read-only | Accepted |
@@ -507,11 +508,13 @@ And one more: should the orchestrator read the cluster directly, without an MCP 
 
 ### Consequences
 - **Gains:** discovery is complete and identical in every run; the agent sees configuration it can reason about freely; names match across every component.
-- **Trade-offs:** the prompt grows with the size of the namespace (a large application means a long inventory; no summarization yet). Facts are more tokens than booleans. Pod placement (which node, which zone) is not included yet, which is why the agent cannot find W1 (ADR-0030 adds it).
+- **Trade-offs:** the prompt grows with the size of the namespace (a large application means a long inventory; no summarization yet). Facts are more tokens than booleans. Pod placement (which node and zone every pod runs on) was added on 2026-11-27 for node and zone failures (ADR-0030): `get_placement`, which needs a read-only ClusterRole on nodes, the only cluster-scoped read.
 
 ### In the code
 - `servers/mcp/k8s.py`: `SKIPPED_KINDS`, `namespaced_kinds`, `listable_kinds`, `get_inventory`, `get_workloads`, `CONTAINER_FIELDS`, `POD_FIELDS`, `env_facts`.
-- `orchestrator/agent.py`: `collect`, `discover_inventory`, `REQUIRED_KINDS`, `collect_workloads`, and the field rules in `RUN_SECTION`.
+- `servers/mcp/k8s.py`: `get_placement`, `node_facts`, `workload_of`, `ZONE_LABEL`.
+- `orchestrator/agent.py`: `collect`, `discover_inventory`, `REQUIRED_KINDS`, `collect_workloads`, `collect_placement`, `format_placement`, and the field rules in `RUN_SECTION`.
+- `charts/chaos-agent/templates/mcp-rbac.yaml`: the observe `view` RoleBinding and the `-nodes` ClusterRole.
 
 
 ---
@@ -701,7 +704,7 @@ Every patch must be undone after the experiment, even if the orchestrator crashe
 
 ## ADR-0018: API groups whose controllers act outside the namespace are denied by default
 
-**Status:** Accepted, 2026-11-26
+**Status:** Superseded by ADR-0035, 2026-11-27 (accepted 2026-11-26)
 **Related:** ADR-0016 (denylist), ADR-0017 (snapshots), ADR-0020 (owners)
 
 ### Context
@@ -728,9 +731,7 @@ Chaos on the GitOps tool itself stays possible the right way: scaling `argocd-ap
 - **Trade-offs:** enforced by the orchestrator only, not by the admission policy, so a direct call to the disrupt server bypasses it. A new operator with the same risk is open until someone adds its group.
 
 ### In the code
-- `orchestrator/run_config.py`: `DEFAULT_DENY_GROUPS`, the `deny_groups` check in `load_roe`, `denied_group`.
-- `orchestrator/runner.py`: `check` (`run_config.denied_group`).
-- `lab/apps/boutique/roe.yaml`: `deny_groups`, with the reasons.
+- Replaced by ADR-0035: `DEFAULT_DENY_GROUPS`, `deny_groups` and `denied_group` were removed from `orchestrator/run_config.py` on 2026-11-27. The reasons for each group above live on as comments in `lab/apps/boutique/roe.yaml`.
 
 
 ---
@@ -1189,7 +1190,8 @@ Every action so far works on objects in the tested namespaces. None of them test
 - **Not solved:** an ungraceful node death with the real detection delay (backlog, with AWS FIS). A watchdog that uncordons if the orchestrator dies and never comes back (backlog; ADR-0031 covers a restart).
 
 ### In the code
-- Not built yet. Planned: an observe placement tool in `servers/mcp/k8s.py`; node tools in `servers/mcp/disrupt.py`; the `node_failure` action in `orchestrator/runner.py`; `node_actions` in `orchestrator/run_config.py`; RBAC and the policy in `charts/chaos-agent/templates/`.
+- Built: the placement tool, `get_placement` in `servers/mcp/k8s.py`, with `collect_placement` in `orchestrator/agent.py` and the `-nodes` ClusterRole in `charts/chaos-agent/templates/mcp-rbac.yaml`.
+- Not built yet: node tools in `servers/mcp/disrupt.py`; the `node_failure` action in `orchestrator/runner.py`; `node_actions` in `orchestrator/run_config.py`; RBAC and the policy in `charts/chaos-agent/templates/`.
 
 
 ---
@@ -1314,6 +1316,45 @@ Option 2. On every push and pull request:
 ### In the code
 - Not built yet. Planned: `.github/workflows/`. Today the manual checks live in `orchestrator/tests/` and `servers/mcp/tests/`.
 
+
+
+---
+
+<a id="adr-0035"></a>
+
+## ADR-0035: What the agent may not change is set only by the RoE, by API group or by group/Kind
+
+**Status:** Accepted, 2026-11-27
+**Supersedes:** ADR-0018
+**Related:** ADR-0016 (denylist), ADR-0019 (protected workloads), ADR-0020 (owners)
+
+### Context
+ADR-0018 shipped a default list of denied API groups, applied whenever the RoE left `deny_groups` out. Two problems showed up:
+- **We were deciding for the customer** what their agent may touch. Which operators are dangerous in a cluster is the ops team's knowledge, not ours.
+- **A group is too coarse.** `argoproj.io` was denied because of Argo CD Applications, which can prune whole applications. But Argo Rollouts are `argoproj.io` too: an application that deploys with Rollouts could not be tested at all, not even with `delete_pod`. A Rollout is restored from its snapshot exactly like a Deployment.
+
+### Options
+1. **Keep the default list, and let the RoE override it.** Safe for a customer who never reads the RoE, but it is still our decision, and still by group.
+2. **No default list, an empty deny unless the RoE says otherwise.** The owner decides; but an RoE copied without thought silently allows everything a snapshot cannot restore.
+3. **No default list, and `deny` is required in the RoE,** with entries that are either an API group or one group/Kind. `deny: []` is a valid, explicit choice.
+
+### Decision
+Option 3.
+- **`deny`** replaces `deny_groups`. An entry without a `/` denies an API group and its subgroups (`fluxcd.io` covers `kustomize.toolkit.fluxcd.io`, and not `notfluxcd.io`); an entry with a `/` denies one kind (`argoproj.io/Application`).
+- **Required:** an RoE without `deny` is rejected when it is loaded, with a message that says to write `deny: []` to deny nothing more.
+- **No list in the code.** The lab RoE documents a recommended list with the reason for each entry: Argo CD's Application, ApplicationSet and AppProject (Rollouts stay open), Flux, cloud controllers (ACK, Crossplane, Upbound, Config Connector, Azure), Velero and CloudNativePG.
+- **Unchanged:** the disrupt server's own denylist (Secrets, PersistentVolumeClaims, ServiceAccounts, RBAC) and the admission policy. They are a security boundary, not a limit on chaos (ADR-0016), and they are not the RoE's to remove.
+
+### Consequences
+- **Gains:** the RoE owner decides, at the granularity they need; Argo Rollouts, and any kind in a group that is otherwise dangerous, can be tested.
+- **Trade-offs:** every RoE must now decide; there is no safe fallback for an owner who writes `deny: []` without knowing their operators. Enforced by the orchestrator only, like before: a direct call to the disrupt server bypasses it.
+- **Not solved:** a GitOps controller with self-heal reverts any change to the objects it manages, Rollouts and Deployments alike, within seconds; the experiment then measures the revert. That is a property of how the application is deployed, to be stated in the RoE or detected later.
+
+### In the code
+- `orchestrator/run_config.py`: the `deny` check in `load_roe`, `denied`.
+- `orchestrator/runner.py`: `check` (`run_config.denied`).
+- `orchestrator/agent.py`: `format_rules`.
+- `lab/apps/boutique/roe.yaml`: `deny`, with the reason for each entry.
 
 ---
 

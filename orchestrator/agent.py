@@ -11,6 +11,7 @@ MAX_ITERATIONS = 20
 MAX_TOKENS = 16384
 INVENTORY_TOOL = "observe__get_inventory"
 WORKLOADS_TOOL = "observe__get_workloads"
+PLACEMENT_TOOL = "observe__get_placement"
 
 SYSTEM_PROMPT = """You are a chaos engineering agent for applications on Kubernetes. You find weaknesses by running controlled experiments within the Rules of Engagement, and you report what broke, what held, and why.
 The orchestrator runs your experiments: it measures the user journeys before, during and after your change, restores the change, and judges the result against the steady state. You choose the experiments and explain the results.
@@ -56,7 +57,11 @@ Fields use the Kubernetes names, as in the workload's YAML. A field that is left
 For a DaemonSet, replicas is the number of pods that should run, one per eligible node.
 Environment variables show only the name and where the value comes from (literal, secretKeyRef, configMapKeyRef, fieldRef, resourceFieldRef), never the value. envFrom lists whole ConfigMaps or Secrets by name. Volumes show only name and type.
 Not included at all: container command, args and ports, and the values of any variable.
-{workloads}"""
+{workloads}
+
+Placement, from step {placement_steps}: every node with its zone, then every workload in scope with the node, zone and phase of each of its pods, one JSON object per line. Cite those steps as evidence of where pods run.
+A workload whose pods all share one node or one zone loses all of them when that node or zone fails. Placement is a snapshot from before the first experiment: pods that are recreated (a deleted pod, a rollout) may land elsewhere.
+{placement}"""
 
 # Kinds the agent must see to know what it can break; a run that cannot read them fails.
 REQUIRED_KINDS = {"apps/Deployment", "apps/StatefulSet", "apps/DaemonSet", "core/Service"}
@@ -97,6 +102,26 @@ async def collect_workloads(conn, run_id, allowed, scope):
                  for namespace, content in contents.items() for workload in content["result"]]
     return workloads, steps
 
+async def collect_placement(conn, run_id, allowed, scope):
+    """Ask the observe server where the pods of every workload in the scope run."""
+    contents, steps = await collect(conn, run_id, allowed, scope, PLACEMENT_TOOL)
+    nodes, workloads, unreadable = {}, [], None
+    for namespace, content in contents.items():
+        nodes |= {n["name"]: n for n in content["nodes"]}
+        workloads += [{"namespace": namespace, **w} for w in content["workloads"]]
+        unreadable = unreadable or content.get("nodes_unreadable")
+    return {"nodes": [nodes[name] for name in sorted(nodes)], "workloads": workloads,
+            "nodes_unreadable": unreadable}, steps
+
+def format_placement(placement):
+    """Nodes, then workloads, one JSON object per line for the prompt, sorted so the prompt is stable."""
+    lines = [json.dumps({"node": n}, sort_keys=True) for n in placement["nodes"]]
+    if placement["nodes_unreadable"]:
+        lines.append(f"Nodes could not be read ({placement['nodes_unreadable']}): zones and nodes are unknown.")
+    rows = sorted(placement["workloads"], key=lambda w: (w["namespace"], w["kind"], w["name"]))
+    lines += [json.dumps(w, sort_keys=True) for w in rows]
+    return "\n".join(lines)
+
 def format_workloads(workloads):
     """The workloads as one JSON object per line for the prompt, sorted so the prompt is stable."""
     rows = sorted(workloads, key=lambda w: (w["namespace"], w["kind"], w["name"]))
@@ -131,7 +156,8 @@ def format_rules(roe, can_experiment):
     return (f"Experiments in this run: at most {roe['max_experiments']}. restore_after_s: at most {roe['max_restore_after_s']}.\n"
             f"Journeys that write data: {'allowed' if roe['allow_write_journeys'] else 'not allowed'}.\n"
             f"Protected workloads, to measure and never change: {protected}.\n"
-            f"API groups that can never be changed: {', '.join(roe['deny_groups']) or 'none'}.\n"
+            f"Denied by the Rules of Engagement, never to be changed (an API group covers its subgroups): "
+            f"{', '.join(roe['deny']) or 'nothing'}.\n"
             "Always refused: changes to Secrets, PersistentVolumeClaims, ServiceAccounts and RBAC, and to the "
             "images, commands, args, security context, service account, host access and volumes of pods.")
 
@@ -144,6 +170,7 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
     server_tools = {t["name"] for t in await tools.load_tools(max_level)}
     inventory, unreadable, discovery_steps = await discover_inventory(conn, run_id, server_tools, scope)
     workloads, workload_steps = await collect_workloads(conn, run_id, server_tools, scope)
+    placement, placement_steps = await collect_placement(conn, run_id, server_tools, scope)
 
     # The model never calls an MCP server itself: it plans, and the orchestrator's own tools carry
     # the plan out under the RoE. Any server tool name the model invents is denied.
@@ -160,7 +187,8 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
         application=format_profile(target), max_level=max_level, rules=format_rules(roe, can_experiment),
         unreadable=format_unreadable(unreadable), discovery_steps=", ".join(map(str, discovery_steps)),
         inventory=format_inventory(inventory), workload_steps=", ".join(map(str, workload_steps)),
-        workloads=format_workloads(workloads)))
+        workloads=format_workloads(workloads), placement_steps=", ".join(map(str, placement_steps)),
+        placement=format_placement(placement)))
 
     messages = [{"role": "user", "content": task}]
 

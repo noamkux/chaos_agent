@@ -82,8 +82,8 @@ def check(args, roe, target, done):
     kind = str(action.get("kind", ""))
     if "/" not in kind or not action.get("name"):
         return "action needs kind as group/Kind and a name"
-    if run_config.denied_group(kind, roe["deny_groups"]):
-        return f"kind '{kind}' is in an API group the Rules of Engagement deny"
+    if run_config.denied(kind, roe["deny"]):
+        return f"kind '{kind}' is denied by the Rules of Engagement"
     if action["name"] in roe["protected_workloads"]:
         return f"'{action['name']}' is protected by the Rules of Engagement: measure it, never change it"
     if not names or any(name not in profile for name in names):
