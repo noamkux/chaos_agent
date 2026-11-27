@@ -136,7 +136,9 @@ def judge(baseline, measurement, journeys, steady_state, action_second, restore_
 
     Returns:
         {"verdict": "inconclusive", "reason", "baseline" and "before_action": timeline per journey} if
-        any second before the action was not ok. Otherwise {"verdict": "broke" or "withstood", "journeys": per journey
+        at least MIN_BROKEN_S seconds before the action were not ok: one bad second is noise before the
+        action just as it is after it (at a few users per second, one slow request makes a second's p95
+        slow). Otherwise {"verdict": "broke" or "withstood", "journeys": per journey
         its timeline, baseline and after_action totals, broken_s, not_sent and recovered_after_s}.
         broke means at least MIN_BROKEN_S bad seconds after the action, journeys not sent, or no
         recovery by the end of the measurement.
@@ -145,7 +147,7 @@ def judge(baseline, measurement, journeys, steady_state, action_second, restore_
     for journey in journeys:
         statuses = statuses_of(measurement, journey, steady_state)
         before = statuses_of(baseline, journey, steady_state) + statuses[:action_second]
-        if any(status != "ok" for status in before):
+        if sum(status != "ok" for status in before) >= MIN_BROKEN_S:
             return {"verdict": "inconclusive",
                     "reason": f"journey '{journey}' was not steady before the action",
                     "baseline": {j: timeline(statuses_of(baseline, j, steady_state), set()) for j in journeys},

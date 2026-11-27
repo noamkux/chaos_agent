@@ -76,11 +76,29 @@ def test_no_recovery_by_the_end_broke():
     assert result["journeys"]["home"]["recovered_after_s"] is None
 
 
-def test_not_steady_before_the_action_is_inconclusive_and_shows_why():
+def test_one_bad_second_before_the_action_is_noise():
     result = experiment.judge(BASELINE, measurement([OK, SLOW, OK] + [OK] * 7), ["home"], STEADY, 3)
+    assert result["verdict"] == "withstood"
+
+
+def test_not_steady_before_the_action_is_inconclusive_and_shows_why():
+    result = experiment.judge(BASELINE, measurement([SLOW, OK, FAIL] + [OK] * 7), ["home"], STEADY, 3)
     assert result["verdict"] == "inconclusive"
-    assert result["before_action"] == {"home": ".s."}
+    assert result["before_action"] == {"home": "s.x"}
     assert result["baseline"] == {"home": "....."}
+
+
+def test_bad_seconds_in_the_baseline_and_before_the_action_add_up():
+    baseline = measurement([OK, OK, SLOW, OK, OK])
+    result = experiment.judge(baseline, measurement([OK, SLOW, OK] + [OK] * 7), ["home"], STEADY, 3)
+    assert result["verdict"] == "inconclusive"
+
+
+def test_one_bad_second_before_the_action_does_not_count_as_broken():
+    result = experiment.judge(BASELINE, measurement([SLOW, OK, OK] + [OK] * 3 + [FAIL] + [OK] * 3),
+                              ["home"], STEADY, 3)
+    assert result["verdict"] == "withstood"
+    assert result["journeys"]["home"]["broken_s"] == 1
 
 
 def test_recovery_from_the_restore_or_from_the_action():

@@ -1,12 +1,14 @@
 """A run of the agent against Online Boutique, with the lab's target.yaml and Rules of Engagement."""
 import asyncio
+import os
 import agent
 import db
 
 from pathlib import Path
 import run_config
 
-MODEL = "claude-haiku-5-5"
+# Haiku while developing; CHAOS_MODEL=claude-sonnet-5-5 for the demo runs.
+MODEL = os.environ.get("CHAOS_MODEL", "claude-haiku-5-5")
 LAB = Path(__file__).resolve().parents[2] / "lab" / "apps" / "boutique"
 TASK = "Find the weaknesses of the application in namespace 'boutique' by running experiments, and report them."
 
