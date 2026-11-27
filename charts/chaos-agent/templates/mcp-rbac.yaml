@@ -135,3 +135,43 @@ subjects:
     name: {{ $name }}
     namespace: {{ .Release.Namespace }}
 {{- end }}
+
+{{- /* Node actions for the disrupt server: read and patch nodes (what may change on a node is limited
+by the admission policy), and with whole_node, list and evict pods in every namespace. */ -}}
+{{- if and .Values.mcp.levels.disrupt.enabled (has (.Values.mcp.levels.disrupt.nodeActions | default "none") (list "scope_only" "whole_node")) }}
+{{- $name := include "chaos-agent.mcp.fullname" (list $root "disrupt") }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-nodes
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root "disrupt") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, patch]
+  {{- if eq .Values.mcp.levels.disrupt.nodeActions "whole_node" }}
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-nodes
+  labels:
+    {{- include "chaos-agent.mcp.selectorLabels" (list $root "disrupt") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-nodes
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

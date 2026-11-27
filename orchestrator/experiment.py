@@ -119,7 +119,8 @@ def recovered_at(statuses, start):
     return start
 
 
-def judge(baseline, measurement, journeys, steady_state, action_second, restore_second=None):
+def judge(baseline, measurement, journeys, steady_state, action_second, restore_second=None,
+          recover_from_restore=True):
     """Decide the result of one experiment.
 
     Args:
@@ -129,6 +130,9 @@ def judge(baseline, measurement, journeys, steady_state, action_second, restore_
         steady_state: {"success_rate", "p95_ms"} from target.yaml.
         action_second: the second of the measurement in which the action ran.
         restore_second: the second of the restore, or None for an action with nothing to restore.
+        recover_from_restore: count recovery from the restore (a patch, which the system cannot heal
+            on its own) or, when False, from the action (a node failure, which it must heal while the
+            node is still down).
 
     Returns:
         {"verdict": "inconclusive", "reason", "baseline" and "before_action": timeline per journey} if
@@ -147,8 +151,9 @@ def judge(baseline, measurement, journeys, steady_state, action_second, restore_
                     "baseline": {j: timeline(statuses_of(baseline, j, steady_state), set()) for j in journeys},
                     "before_action": {j: timeline(statuses_of(measurement, j, steady_state)[:action_second], set())
                                       for j in journeys}}
-        # A patch is restored before the system can recover; a deleted pod is replaced on its own.
-        recover_from = restore_second if restore_second is not None else action_second
+        # A patch is restored before the system can recover; a deleted pod is replaced on its own,
+        # and a failed node's pods must be rescheduled elsewhere while it is still down.
+        recover_from = restore_second if restore_second is not None and recover_from_restore else action_second
         recovered = recovered_at(statuses, recover_from)
         results[journey] = {
             "timeline": timeline(statuses, {action_second, restore_second} - {None}),

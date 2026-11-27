@@ -1,6 +1,7 @@
 """The agent loop (harness): the LLM proposes tool calls, the orchestrator checks, executes and records them."""
 
 import json
+import node_failure
 import runner
 import db
 import tools
@@ -54,7 +55,7 @@ Never listed: Secrets, and objects that controllers create (Pods, ReplicaSets, C
 
 Workloads in scope, from step {workload_steps}, one JSON object per line. Cite those steps as evidence for how a workload is configured.
 Fields use the Kubernetes names, as in the workload's YAML. A field that is left out is not set: a container with no livenessProbe has no liveness probe.
-For a DaemonSet, replicas is the number of pods that should run, one per eligible node.
+Every kind with a pod template is listed, custom resources included (an Argo Rollout, an operator's kind); a workload another one controls (a CronJob's Job) is part of its owner. For a DaemonSet, replicas is the number of pods that should run, one per eligible node; a kind with no replica count (a CronJob) has no replicas field.
 Environment variables show only the name and where the value comes from (literal, secretKeyRef, configMapKeyRef, fieldRef, resourceFieldRef), never the value. envFrom lists whole ConfigMaps or Secrets by name. Volumes show only name and type.
 Not included at all: container command, args and ports, and the values of any variable.
 {workloads}
@@ -156,6 +157,7 @@ def format_rules(roe, can_experiment):
     return (f"Experiments in this run: at most {roe['max_experiments']}. restore_after_s: at most {roe['max_restore_after_s']}.\n"
             f"Journeys that write data: {'allowed' if roe['allow_write_journeys'] else 'not allowed'}.\n"
             f"Protected workloads, to measure and never change: {protected}.\n"
+            f"Node failures (node_actions): {roe['node_actions']}.\n"
             f"Denied by the Rules of Engagement, never to be changed (an API group covers its subgroups): "
             f"{', '.join(roe['deny']) or 'nothing'}.\n"
             "Always refused: changes to Secrets, PersistentVolumeClaims, ServiceAccounts and RBAC, and to the "
@@ -181,7 +183,8 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
     if can_experiment:
         internal[runner.RUN_EXPERIMENT_NAME] = lambda args: runner.run_experiment(
             conn, run_id, server_tools, roe, target, namespace, state, args)
-        available.append(runner.run_experiment_tool(scope, [j["name"] for j in target["journeys"]]))
+        node_actions = roe["node_actions"] if node_failure.NODE_TOOLS <= server_tools else "none"
+        available.append(runner.run_experiment_tool(scope, [j["name"] for j in target["journeys"]], node_actions))
 
     system = (SYSTEM_PROMPT + "\n\n" + RUN_SECTION.format(
         application=format_profile(target), max_level=max_level, rules=format_rules(roe, can_experiment),

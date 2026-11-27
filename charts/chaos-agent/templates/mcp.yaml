@@ -57,6 +57,14 @@ spec:
               value: {{ join "," $root.Values.mcp.allowedNamespaces | quote }}
             - name: PORT
               value: {{ $root.Values.mcp.port | quote }}
+            {{- if eq $level "disrupt" }}
+            {{- $nodeActions := $config.nodeActions | default "none" }}
+            {{- if not (has $nodeActions (list "none" "scope_only" "whole_node")) }}
+            {{- fail "mcp.levels.disrupt.nodeActions must be none, scope_only or whole_node" }}
+            {{- end }}
+            - name: NODE_ACTIONS
+              value: {{ $nodeActions | quote }}
+            {{- end }}
             {{- with $config.limits }}
             - name: LONGEST_K6_RUN_S
               value: {{ .longestK6RunS | quote }}

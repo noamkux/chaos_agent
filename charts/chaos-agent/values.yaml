@@ -40,6 +40,11 @@ mcp:
         maxConcurrentUsersPerJourney: 50   # users in flight at once, per journey
     disrupt:
       enabled: false
+      # Node and zone failures. none; scope_only: cordon a node and evict only the pods in
+      # allowedNamespaces; whole_node: evict every pod on the node, and the lost-node taint, which
+      # reaches every namespace. Anything but none grants get and patch on nodes cluster-wide; the
+      # admission policy allows only spec.unschedulable and chaos-agent.io/ taints to change.
+      nodeActions: none
   resources:
     requests:
       cpu: 100m

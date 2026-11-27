@@ -9,8 +9,9 @@ max_level: disrupt
 # Journeys marked writes: true in target.yaml (cart, checkout) create data. Allowed in the lab only.
 allow_write_journeys: true
 
-# Draining a node evicts every pod on it, from every namespace. Allowed in the lab only.
-allow_node_actions: true
+# Node and zone failures: none, scope_only (drain, evicting only pods in scope) or whole_node
+# (evict every pod on the node, from every namespace, and the lost mode). whole_node in the lab only.
+node_actions: whole_node
 
 # Workloads the agent may measure but never change or restart. For state that is not persisted:
 # redis-cart keeps every cart on an emptyDir, so one restart deletes all of them.

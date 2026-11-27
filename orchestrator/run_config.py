@@ -5,9 +5,12 @@ import yaml
 
 LEVELS = ["observe", "probe", "disrupt"]
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}
+# none; scope_only: drain a node or zone, evicting only the pods in scope; whole_node: evict every pod on
+# it, and the lost mode, which reaches every namespace.
+NODE_ACTIONS = ["none", "scope_only", "whole_node"]
 
 # The safe value of every optional RoE setting: an RoE that says nothing allows nothing extra.
-ROE_DEFAULTS = {"allow_write_journeys": False, "allow_node_actions": False,
+ROE_DEFAULTS = {"allow_write_journeys": False, "node_actions": "none",
                 "max_experiments": 10, "max_restore_after_s": 60, "protected_workloads": []}
 
 # The measurement when target.yaml leaves a setting out.
@@ -40,9 +43,11 @@ def load_roe(path):
         raise ValueError(f"{path}: scope.namespaces must list at least one namespace")
     if roe.get("max_level") not in LEVELS:
         raise ValueError(f"{path}: max_level must be one of {LEVELS}")
-    for key in ("allow_write_journeys", "allow_node_actions"):
-        if not isinstance(roe[key], bool):
-            raise ValueError(f"{path}: {key} must be true or false")
+    if not isinstance(roe["allow_write_journeys"], bool):
+        raise ValueError(f"{path}: allow_write_journeys must be true or false")
+    # Not off: in YAML 1.1 an unquoted off is the boolean false.
+    if roe["node_actions"] not in NODE_ACTIONS:
+        raise ValueError(f"{path}: node_actions must be one of {NODE_ACTIONS}")
     for key in ("max_experiments", "max_restore_after_s"):
         if not positive_int(roe[key]):
             raise ValueError(f"{path}: {key} must be a whole number above 0")

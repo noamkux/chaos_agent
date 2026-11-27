@@ -62,7 +62,7 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 
 | # | Decision | Status |
 |---|---|---|
-| [0030](#adr-0030) | Node and zone failures: a drain mode and a lost mode, set by node_actions in the RoE | Proposed |
+| [0030](#adr-0030) | Node and zone failures: a drain mode and a lost mode, set by node_actions in the RoE | Accepted |
 | [0031](#adr-0031) | Pending undos are restored when the orchestrator starts | Proposed |
 | [0032](#adr-0032) | The eval compares the agent with a deterministic baseline, on a weak and a hardened application | Proposed |
 | [0033](#adr-0033) | Retrieval over past experiments, so a run builds on the ones before it | Proposed |
@@ -502,7 +502,7 @@ And one more: should the orchestrator read the cluster directly, without an MCP 
 ### Decision
 - **The orchestrator calls `observe__get_inventory` and `observe__get_workloads`** before the first LLM call, through `call_tool`, so they are recorded as steps. The model cites those steps as evidence of what exists.
 - **The inventory lists every kind the API server can list,** CRDs included, except kinds that controllers create and that change all the time (Pods, ReplicaSets, Endpoints, Events, Leases) and Secrets. Kinds it could not read are reported as unreadable; a run fails if a required kind (Deployment, StatefulSet, DaemonSet, Service) is unreadable.
-- **Workloads are returned as facts,** with the rules for reading them in the prompt ("a field that is left out is not set").
+- **Workloads are returned as facts,** with the rules for reading them in the prompt ("a field that is left out is not set"). Since 2026-11-27, a workload is any object with a pod template (`spec.template`, or `spec.jobTemplate.spec.template` for a CronJob), of any kind, custom resources included, so an Argo Rollout or an operator's workload is seen like a Deployment; objects another workload controls are left out. Placement follows each pod's ownerReferences to the top for the same reason.
 - **Kinds are always `group/Kind`,** in the inventory, the RoE and the disrupt tools.
 - No direct cluster access from the orchestrator; no kube-score or similar.
 
@@ -905,7 +905,7 @@ Code decides, in `experiment.py`:
 - **inconclusive** if any second before the action, in the steady check or in the measurement, was not `ok`: the result cannot be told apart from what was already there. It shows the timelines of both, `baseline` and `before_action`, so the model can see why.
 - **broke** if, after the action, at least `MIN_BROKEN_S` (2) seconds were not `ok`, or any user could not be sent, or the journey had not recovered by the end of the measurement.
 - **withstood** otherwise.
-- **Recovery** is the first second from which every second to the end is `ok`, counted from the restore for a patch and from the action for a deleted pod.
+- **Recovery** is the first second from which every second to the end is `ok`, counted from the restore for a patch, and from the action for a deleted pod and a node failure (ADR-0030).
 
 **`MIN_BROKEN_S = 2`:** a single bad second can be noise (a garbage collection pause, one slow request); two or more is a finding.
 
@@ -1149,7 +1149,7 @@ Option 3.
 
 ## ADR-0030: Node and zone failures: a drain mode and a lost mode, set by node_actions in the RoE
 
-**Status:** Proposed, 2026-11-27
+**Status:** Accepted, 2026-11-27
 **Related:** ADR-0012 (discovery), ADR-0015 (generic tools), ADR-0016 (denylist), ADR-0017 (undo), ADR-0031 (restore on startup)
 
 ### Context
@@ -1178,9 +1178,13 @@ Every action so far works on objects in the tested namespaces. None of them test
 - **One action, `node_failure`,** with a `node` or a `zone` target and a `mode`:
   - `drain`: cordon, then evict through the Eviction API; a pod blocked by a PDB (429) is reported as `blocked_by_pdb`, not retried.
   - `lost`: cordon, then the `NoExecute` taint.
-- **`node_actions` in the RoE replaces `allow_node_actions`:** `off` (default), `scope_only` (drain only, evicting only pods in scope), `whole_node` (drain of every pod, and `lost`, which cannot be scoped).
-- **Restore:** remove the taint and uncordon. The undo is written before the cordon. Pods do not move back on their own (only a descheduler does that), so the result includes the placement after the experiment, and the prompt says that later experiments run on that placement.
-- **Guards in the orchestrator:** never a control-plane node; never every schedulable node; a zone failure only when at least two zones exist; `node_actions` in the RoE and `allowNodeActions` in the chart values (two layers).
+- **`node_actions` in the RoE replaces `allow_node_actions`:** `none` (default), `scope_only` (drain only, evicting only pods in scope), `whole_node` (drain of every pod, and `lost`, which cannot be scoped). Not `off`: in YAML 1.1, which PyYAML and Helm read, an unquoted `off` is the boolean false. The chart has the same setting, `mcp.levels.disrupt.nodeActions`, which decides the RBAC and is passed to the server as `NODE_ACTIONS`; the server refuses what it does not allow.
+- **Recovery is counted from the action, not the restore:** the system must reschedule the pods elsewhere while the node is still down; that is what a node failure tests.
+- **Autoscalers:** with Karpenter or Cluster Autoscaler, evicted pods can stay Pending until a new node joins (about a minute for Karpenter, a few for Cluster Autoscaler). The judge needs no knowledge of it: users fail while pods wait, and the timeline shows for how long. `max_restore_after_s` in the RoE and the agent's `restore_after_s` must leave time for it. An autoscaler can also remove the drained node before the restore: `restore_node` treats a 404 as done (`node_gone`), not as a failed restore.
+- **What the agent learns while it runs:** the runner reads the placement every 10 s during the experiment and returns only what changed, as `placement_events`: a node that joined or left, and every workload whose running or pending pods, or nodes, changed, with the seconds after the action. The full reads stay in the audit.
+- **Restore:** remove the taint and uncordon. The undo is written before the cordon, one per node, and a node action that fails half way rolls back every node already touched. Pods do not move back on their own (only a descheduler does that), so the result includes the placement after the experiment, and the prompt says that later experiments run on that placement.
+- **Guards in the server:** never a control-plane node; never `lost` or a whole-node drain on a node where the chaos agent itself runs (pods in its own namespace), since nothing would be left to restore it.
+- **Guards in the orchestrator, against the placement read just before the action:** never every schedulable worker; a zone failure only when at least two zones exist; never a node or zone that runs a protected workload's pods (a node failure would evict them with everything else); `node_actions` in the RoE and `nodeActions` in the chart values (two layers).
 - **The agent sees placement:** a new observe tool returns nodes with their zone and, per node, the workloads in scope that have pods there. Needs `get` and `list` on nodes (a ClusterRole, read-only).
 - **Permissions:** `patch` on nodes (cordon and taint), and `create` on `pods/eviction` in scope. The admission policy allows the disrupt ServiceAccount to change only `spec.unschedulable` and taints whose key starts with `chaos-agent.io/`; labels, annotations, other taints and the rest of the spec are denied by the API server.
 
@@ -1190,8 +1194,14 @@ Every action so far works on objects in the tested namespaces. None of them test
 - **Not solved:** an ungraceful node death with the real detection delay (backlog, with AWS FIS). A watchdog that uncordons if the orchestrator dies and never comes back (backlog; ADR-0031 covers a restart).
 
 ### In the code
-- Built: the placement tool, `get_placement` in `servers/mcp/k8s.py`, with `collect_placement` in `orchestrator/agent.py` and the `-nodes` ClusterRole in `charts/chaos-agent/templates/mcp-rbac.yaml`.
-- Not built yet: node tools in `servers/mcp/disrupt.py`; the `node_failure` action in `orchestrator/runner.py`; `node_actions` in `orchestrator/run_config.py`; RBAC and the policy in `charts/chaos-agent/templates/`.
+- Built: the placement tool, `get_placement` in `servers/mcp/k8s.py`, with `collect_placement` in `orchestrator/agent.py` and the observe `-nodes` ClusterRole in `charts/chaos-agent/templates/mcp-rbac.yaml`.
+- Built: the node tools in `servers/mcp/disrupt.py` (`NODE_ACTIONS`, `TAINT_PREFIX`, `LOST_TAINT`, `node_to_fail`, `cordon_node`, `taint_node_lost`, `evict_pods`, `restore_node`); `mcp.levels.disrupt.nodeActions` in `charts/chaos-agent/values.yaml`; the disrupt `-nodes` ClusterRole in `mcp-rbac.yaml`; `pods/eviction` in `_helpers.tpl`; `podEviction` and the node validation in `mcp-admission-policy.yaml`.
+- `orchestrator/node_failure.py`: `check`, `targets` (the guards), `merge`, `summary`, `changes` (the placement events), `POLL_S`.
+- `orchestrator/runner.py`: `node_failure` in `ACTIONS`, `NODE_FAILURE_TEXT`, `run_experiment_tool` (node, zone, mode), `check`, and in `run_experiment`: step 0 (the targets), the `node_failure` branch (undo per node, `roll_back`, `watch_placement`, restore).
+- `orchestrator/experiment.py`: `judge(..., recover_from_restore)`.
+- `orchestrator/run_config.py`: `NODE_ACTIONS`, `node_actions` in `ROE_DEFAULTS` and its check.
+- `orchestrator/agent.py`: node_failure offered only when `node_failure.NODE_TOOLS` are loaded; `format_rules`.
+- `orchestrator/tests/try_experiment.py`: `zone`, a fixed zone failure without the model.
 
 
 ---

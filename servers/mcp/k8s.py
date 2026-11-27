@@ -63,9 +63,8 @@ def listable_kinds():
     return {kind: resource for kind, resource in namespaced_kinds().items() if kind not in SKIPPED_KINDS}
 
 def container_facts(container):
-    """The settings resilience checks read from one container, as in the workload's YAML."""
-    data = serialize(container)
-    return {field: data[field] for field in CONTAINER_FIELDS if field in data}
+    """The settings resilience checks read from one container (a dict, as in the workload's YAML)."""
+    return {field: container[field] for field in CONTAINER_FIELDS if field in container}
 
 def env_facts(container):
     """Names and sources of a container's environment variables. Values never leave this function."""
@@ -73,32 +72,40 @@ def env_facts(container):
     # Looks at where each value comes from: written in the spec (literal) or a reference (valueFrom).
     # Returns name and source only; var.value is never read, so a secret cannot be returned by mistake.
     env = []
-    for var in container.env or []:
-        if var.value_from is None:
+    for var in container.get("env") or []:
+        if "valueFrom" not in var:
             source = "literal"
         else:
-            source = next(iter(serialize(var.value_from)))
-        env.append({"name": var.name, "source": source})
+            source = next(iter(var["valueFrom"]))
+        env.append({"name": var["name"], "source": source})
 
     # envFrom: every key of a whole ConfigMap or Secret loaded as variables; no variable names here.
     # Looks at which kind of source is loaded and its name.
     # Returns the source kind and name only; the keys and values inside are not read.
     env_from = []
-    for item in container.env_from or []:
-        source = "secretRef" if item.secret_ref else "configMapRef"
-        ref = item.secret_ref or item.config_map_ref
-        env_from.append({"source": source, "name": ref.name})
+    for item in container.get("envFrom") or []:
+        source = "secretRef" if "secretRef" in item else "configMapRef"
+        env_from.append({"source": source, "name": item[source].get("name")})
 
     # Leave out empty lists, so a container without variables adds nothing to the output.
     facts = {"env": env, "envFrom": env_from}
     return {key: value for key, value in facts.items() if value}
 
+def pod_template(obj):
+    """The pod template of a workload of any kind, or None: spec.template (Deployments, StatefulSets,
+    DaemonSets, Jobs, Argo Rollouts, most operators) or spec.jobTemplate.spec.template (CronJobs)."""
+    spec = obj.get("spec") or {}
+    template = spec.get("template") or (spec.get("jobTemplate") or {}).get("spec", {}).get("template")
+    return template if isinstance(template, dict) and isinstance(template.get("spec"), dict) else None
+
 def get_workloads(namespace: str) -> list[dict]:
-    """List the Deployments, StatefulSets and DaemonSets in a namespace, with the facts resilience checks read from each one.
+    """List every workload in a namespace, of any kind with a pod template (Deployments, StatefulSets, DaemonSets, CronJobs, Argo Rollouts, an operator's custom resources), with the facts resilience checks read from each one.
 
     Fields use the Kubernetes names, as in the workload's YAML. A field that is not set is left
     out: a container with no livenessProbe field has no liveness probe.
-    For a DaemonSet, replicas is the number of pods that should run, one per eligible node.
+    For a DaemonSet, replicas is the number of pods that should run, one per eligible node; a kind
+    with no replica count (a CronJob) has no replicas field. A workload another one controls (a
+    CronJob's Job) is left out: it is part of its owner.
     Environment variables show only the name and where the value comes from (literal,
     secretKeyRef, configMapKeyRef, fieldRef, resourceFieldRef), never the value; envFrom lists
     whole ConfigMaps or Secrets by name. Volumes show only name and type.
@@ -106,38 +113,51 @@ def get_workloads(namespace: str) -> list[dict]:
     """
         
     check_scope(namespace)
-    workloads = [summarize(d, "apps/Deployment") for d in apps.list_namespaced_deployment(namespace).items]
-    workloads += [summarize(s, "apps/StatefulSet") for s in apps.list_namespaced_stateful_set(namespace).items]
-    workloads += [summarize(d, "apps/DaemonSet") for d in apps.list_namespaced_daemon_set(namespace).items]
+    workloads = []
+    for kind, resource in sorted(listable_kinds().items()):
+        try:
+            items = dynamic_client.get(resource, namespace=namespace).items
+        except ApiException:
+            # get_inventory reports the kinds that cannot be read; nothing is known about them here.
+            continue
+        for item in items:
+            obj = item.to_dict()
+            # A workload another one controls (a CronJob's Job) is part of its owner, not one of its own.
+            if any(o.get("controller") for o in obj["metadata"].get("ownerReferences") or []):
+                continue
+            if pod_template(obj) is not None:
+                workloads.append(summarize(obj, kind))
     return workloads
 
 def summarize(workload, kind):
-    """The facts resilience checks read from a workload, in Kubernetes field names."""
-    template = workload.spec.template
-    pod = serialize(template.spec)
+    """The facts resilience checks read from a workload (a dict of any kind), in Kubernetes field names."""
+    template = pod_template(workload)
+    pod = template["spec"]
+    spec, status = workload.get("spec") or {}, workload.get("status") or {}
     if kind == "apps/DaemonSet":
         # One pod per eligible node: there is no spec.replicas, the controller sets the count.
-        replicas = workload.status.desired_number_scheduled
-        ready = workload.status.number_ready
+        replicas = status.get("desiredNumberScheduled")
+        ready = status.get("numberReady")
     else:
-        replicas = workload.spec.replicas
-        ready = workload.status.ready_replicas or 0
+        # None for a kind with no replica count (a CronJob); left out of the result.
+        replicas = spec.get("replicas")
+        ready = status.get("readyReplicas", 0) if replicas is not None else None
     summary = {
         "kind": kind,
-        "name": workload.metadata.name,
+        "name": workload["metadata"]["name"],
         "replicas": replicas,
         "readyReplicas": ready,
-        "labels": template.metadata.labels or {},
+        "labels": (template.get("metadata") or {}).get("labels") or {},
         **{field: pod[field] for field in POD_FIELDS if field in pod},
         # Volume type only (emptyDir, persistentVolumeClaim, secret, ...), not its settings.
         "volumes": [{"name": v["name"], "type": next(key for key in v if key != "name")}
                     for v in pod.get("volumes", [])],
-        "initContainers": [{**container_facts(c), **env_facts(c)}
-                           for c in template.spec.init_containers or []],
-        "containers": [{**container_facts(c), **env_facts(c)} for c in template.spec.containers],
+        "initContainers": [{**container_facts(c), **env_facts(c)} for c in pod.get("initContainers") or []],
+        "containers": [{**container_facts(c), **env_facts(c)} for c in pod.get("containers") or []],
     }
-    # Leave out empty lists and dicts; replicas 0 and false values stay, they are facts.
-    return {key: value for key, value in summary.items() if value not in ([], {})}
+    # Leave out empty lists and dicts, and a replica count the kind does not have; replicas 0 and
+    # false values stay, they are facts.
+    return {key: value for key, value in summary.items() if value not in ([], {}) and value is not None}
 
 def get_inventory(namespace: str) -> dict[str, dict]:
     """List the names of every kind of object in a namespace, including custom resources (CRDs), keyed by group/Kind: core/Service, apps/Deployment, policy/PodDisruptionBudget.

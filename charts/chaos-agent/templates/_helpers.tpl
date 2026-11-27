@@ -42,6 +42,10 @@ app.kubernetes.io/component: {{ index . 1 }}
 - apiGroups: [""]
   resources: [pods]
   verbs: [delete]
+# Evict pods from a node in these namespaces, as kubectl drain does (PodDisruptionBudgets respected).
+- apiGroups: [""]
+  resources: [pods/eviction]
+  verbs: [create]
 {{- end }}
 {{- end -}}
 

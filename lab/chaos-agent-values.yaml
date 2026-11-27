@@ -13,6 +13,8 @@ mcp:
   levels:
     disrupt:
       enabled: true
+      # The lab tests node and zone failures; the chaos agent runs on the control-plane, out of reach.
+      nodeActions: whole_node
   nodeSelector:
     node-role.kubernetes.io/control-plane: ""
   tolerations:

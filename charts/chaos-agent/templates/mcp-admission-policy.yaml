@@ -25,11 +25,15 @@ spec:
       expression: >-
         request.resource.group == "" && request.resource.resource == "secrets"
         && request.namespace == {{ .Release.Namespace | quote }}
+    - name: podEviction
+      expression: >-
+        request.operation == "CREATE" && request.resource.group == "" && request.resource.resource == "pods"
+        && has(request.subResource) && request.subResource == "eviction"
   validations:
     - expression: >-
-        variables.snapshotSecret || (!has(request.subResource) && (request.operation == "UPDATE"
+        variables.snapshotSecret || variables.podEviction || (!has(request.subResource) && (request.operation == "UPDATE"
         || (request.operation == "DELETE" && request.resource.group == "" && request.resource.resource == "pods")))
-      message: "the disrupt server may only update objects, delete pods and manage its own snapshots"
+      message: "the disrupt server may only update objects, delete and evict pods, and manage its own snapshots"
     - expression: >-
         variables.snapshotSecret || !(request.resource.group == ""
         && request.resource.resource in ["secrets", "persistentvolumeclaims", "serviceaccounts"])
@@ -45,6 +49,17 @@ spec:
         request.operation != "UPDATE" || request.resource.resource != "pods"
         || ({{ include "chaos-agent.mcp.podGuard" (list "object.spec" "oldObject.spec") | nindent 10 | trim }})
       message: "a pod change may not touch images, commands, args, security context, service account, host access or volumes"
+    # A node may only be cordoned and uncordoned, and get or lose the server's own chaos-agent.io/ taints.
+    - expression: >-
+        request.resource.group != "" || request.resource.resource != "nodes" || (
+        object.metadata.?labels.orValue({}) == oldObject.metadata.?labels.orValue({})
+        && object.metadata.?annotations.orValue({}) == oldObject.metadata.?annotations.orValue({})
+        && object.spec.?taints.orValue([]).filter(t, !t.key.startsWith("chaos-agent.io/"))
+           == oldObject.spec.?taints.orValue([]).filter(t, !t.key.startsWith("chaos-agent.io/"))
+        && object.spec.?podCIDR.orValue("") == oldObject.spec.?podCIDR.orValue("")
+        && object.spec.?podCIDRs.orValue([]) == oldObject.spec.?podCIDRs.orValue([])
+        && object.spec.?providerID.orValue("") == oldObject.spec.?providerID.orValue(""))
+      message: "on a node, the disrupt server may change only spec.unschedulable and its own chaos-agent.io/ taints"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

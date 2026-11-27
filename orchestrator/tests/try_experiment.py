@@ -2,6 +2,7 @@
 from the probe server, then one fixed experiment through the runner, with the lab's target.yaml and RoE."""
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 import db
@@ -11,11 +12,22 @@ import tools
 
 LAB = Path(__file__).resolve().parents[2] / "lab" / "apps" / "boutique"
 
-# A fixed, mild experiment: frontend has more than one replica, so this should withstand.
-EXPERIMENT = {
-    "hypothesis": "Deleting one frontend pod does not break home or product: the other replica serves them.",
-    "action": {"type": "delete_pod", "namespace": "boutique", "kind": "apps/Deployment", "name": "frontend"},
-    "journeys": ["home", "product"],
+# Fixed experiments, chosen by the first argument (default: pod).
+EXPERIMENTS = {
+    # Mild: frontend has more than one replica, so this should withstand.
+    "pod": {
+        "hypothesis": "Deleting one frontend pod does not break home or product: the other replica serves them.",
+        "action": {"type": "delete_pod", "namespace": "boutique", "kind": "apps/Deployment", "name": "frontend"},
+        "journeys": ["home", "product"],
+    },
+    # W1: both frontend pods are pinned to one zone, so losing it should break every journey.
+    # Pass the zone as the second argument (default zone-a); the runner refuses a zone with redis-cart.
+    "zone": {
+        "hypothesis": "Draining the zone that runs frontend breaks home and product until its pods are rescheduled.",
+        "action": {"type": "node_failure", "zone": "zone-a", "mode": "drain"},
+        "journeys": ["home", "product"],
+        "restore_after_s": 60,
+    },
 }
 
 
@@ -60,8 +72,13 @@ async def main():
 
             print("\n2. One experiment through the runner")
             state = {"experiments": 0}
+            choice = sys.argv[1] if len(sys.argv) > 1 else "pod"
+            planned = EXPERIMENTS[choice]
+            if choice == "zone" and len(sys.argv) > 2:
+                planned = {**planned, "action": {**planned["action"], "zone": sys.argv[2]}}
+            print(f"experiment: {choice} {planned['action']}")
             result = json.loads(await runner.run_experiment(
-                conn, run_id, server_tools, roe, target, "boutique", state, EXPERIMENT))
+                conn, run_id, server_tools, roe, target, "boutique", state, planned))
             print(json.dumps(result, indent=1))
             print("experiments counted:", state["experiments"])
             db.finish_run(conn, run_id, "completed")
