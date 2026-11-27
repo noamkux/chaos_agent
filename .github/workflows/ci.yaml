@@ -65,7 +65,7 @@ jobs:
             - name: Render and validate the manifests
               run: |
                   helm template ci charts/chaos-agent -f charts/chaos-agent/ci/all-levels-values.yaml \
-                      | kubeconform -strict -summary -output github
+                      | kubeconform -strict -summary -output text
             - name: The chart refuses unsafe values
               run: |
                   refused() {
@@ -85,7 +85,8 @@ jobs:
                   refused "nodeActions must be none, scope_only or whole_node" \
                       --set mcp.image.tag=ci --set "mcp.allowedNamespaces={shop}" \
                       --set mcp.levels.disrupt.enabled=true --set mcp.levels.disrupt.nodeActions=off
-            - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+            - id: kind
+              uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
               with:
                   cluster_name: chaos-ci
             - name: Build the MCP image and load it into kind
@@ -105,7 +106,7 @@ jobs:
                   kubectl get validatingadmissionpolicy -o json \
                       | jq -e '[.items[].status.typeChecking.expressionWarnings // [] | length] | add == 0'
             - name: Show what failed
-              if: failure()
+              if: failure() && steps.kind.outcome == 'success'
               run: |
                   kubectl get pods -A
                   kubectl get events -n chaos-system --sort-by=.lastTimestamp
