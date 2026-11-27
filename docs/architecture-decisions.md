@@ -44,7 +44,8 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | [0035](#adr-0035) | What the agent may not change is set only by the RoE, by API group or by group/Kind | Accepted |
 | [0019](#adr-0019) | Data stores are protected only through protected_workloads in the RoE | Accepted |
 | [0020](#adr-0020) | Three inputs with three owners: target.yaml, the RoE, and the chart values | Accepted |
-| [0028](#adr-0028) | The MCP image and pods are locked down: pinned digests, hashed dependencies, non-root, read-only | Accepted |
+| [0028](#adr-0028) | The MCP image and pods are locked down: pinned digests, hashed dependencies, non-root, read-only | Superseded by 0037 |
+| [0037](#adr-0037) | The MCP image runs on Chainguard Python with no shell and no pip, scanned, and signed with provenance and an SBOM | Accepted |
 | [0029](#adr-0029) | Env values and Secrets never leave the MCP servers | Accepted |
 
 ### Measuring and judging
@@ -57,6 +58,7 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | [0024](#adr-0024) | The warm-up of every measurement is thrown away before judging | Accepted |
 | [0025](#adr-0025) | A steady check before every experiment; an experiment that never gets steady is not run and not counted | Accepted |
 | [0026](#adr-0026) | Measurement settings belong to the application, caps to the cluster | Accepted |
+| [0036](#adr-0036) | One bad second before the action is noise, as it is after it | Accepted |
 
 ### Next
 
@@ -65,8 +67,8 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | [0030](#adr-0030) | Node and zone failures: a drain mode and a lost mode, set by node_actions in the RoE | Accepted |
 | [0031](#adr-0031) | Pending undos are restored when the orchestrator starts | Accepted |
 | [0032](#adr-0032) | The eval compares the agent with a deterministic baseline, on a weak and a hardened application | Proposed |
-| [0033](#adr-0033) | Retrieval over past experiments, so a run builds on the ones before it | Proposed |
-| [0034](#adr-0034) | GitHub Actions runs the cheap checks on every change | Proposed |
+| [0033](#adr-0033) | Retrieval over past experiments, so a run builds on the ones before it: hybrid search in pgvector, as a tool of the model | Proposed |
+| [0034](#adr-0034) | GitHub Actions runs the cheap checks on every change: lint, unit tests, the chart on kind, and the image | Accepted |
 
 
 ---
@@ -884,7 +886,7 @@ Option 2. `run` in `journeys.js` computes the arrival second from `exec.scenario
 
 ## ADR-0023: A deterministic judge decides broke, withstood or inconclusive, second by second
 
-**Status:** Accepted, 2026-11-26 (before_action added 2026-11-27)
+**Status:** Accepted, 2026-11-26 (before_action added 2026-11-27; the inconclusive rule changed by ADR-0036)
 **Related:** ADR-0011 (deterministic or agent), ADR-0021 (k6), ADR-0024 (warm-up), ADR-0025 (steady check)
 
 ### Context
@@ -902,7 +904,7 @@ After an experiment we have, for every journey and every second, how many users 
 ### Decision
 Code decides, in `experiment.py`:
 - **Every second of every journey gets a status:** `fail` if the success rate is below `steady_state.success_rate`, `slow` if everything succeeded but p95 is above `steady_state.p95_ms`, `no_data` if nobody arrived, otherwise `ok`. Success comes first: a second with failures is `fail` whatever its p95.
-- **inconclusive** if any second before the action, in the steady check or in the measurement, was not `ok`: the result cannot be told apart from what was already there. It shows the timelines of both, `baseline` and `before_action`, so the model can see why.
+- **inconclusive** (changed by ADR-0036 to at least `MIN_BROKEN_S` seconds) if any second before the action, in the steady check or in the measurement, was not `ok`: the result cannot be told apart from what was already there. It shows the timelines of both, `baseline` and `before_action`, so the model can see why.
 - **broke** if, after the action, at least `MIN_BROKEN_S` (2) seconds were not `ok`, or any user could not be sent, or the journey had not recovered by the end of the measurement.
 - **withstood** otherwise.
 - **Recovery** is the first second from which every second to the end is `ok`, counted from the restore for a patch, and from the action for a deleted pod and a node failure (ADR-0030).
@@ -1078,7 +1080,7 @@ Option 2.
 
 ## ADR-0028: The MCP image and pods are locked down: pinned digests, hashed dependencies, non-root, read-only
 
-**Status:** Accepted, 2026-11-26
+**Status:** Superseded by ADR-0037, 2026-11-27 (accepted 2026-11-26)
 **Related:** ADR-0008 (servers per level), ADR-0016 (denylist)
 
 ### Context
@@ -1274,64 +1276,98 @@ Option 2, with:
 
 <a id="adr-0033"></a>
 
-## ADR-0033: Retrieval over past experiments, so a run builds on the ones before it
+## ADR-0033: Retrieval over past experiments, so a run builds on the ones before it: hybrid search in pgvector, as a tool of the model
 
-**Status:** Proposed, 2026-11-26 (the store is still to be decided)
-**Related:** ADR-0006 (Postgres), ADR-0027 (prompt)
+**Status:** Proposed, 2026-11-26 (store, embeddings and retrieval decided 2026-11-27; being built)
+**Related:** ADR-0006 (Postgres), ADR-0010 (the model's tools), ADR-0027 (prompt), ADR-0029 (env values)
 
 ### Context
-Every run starts from nothing: it repeats the experiments of the last run, and spends its budget rediscovering known results instead of going deeper. A course requirement is a RAG component. The question: what is retrieved, and from where?
+Every run starts from nothing. In the runs of 2026-11-27 (30 with Sonnet, 31 with Haiku) both models rediscovered the frontend zone pinning (W1) and spent two or three of their 15 experiments reproducing it; Haiku also guessed a wrong dependency between services. A course requirement is a RAG component. Three questions: what is retrieved, where it is stored, and who decides when to retrieve.
+
+What AI tools around chaos engineering do today: Harness derives an application map from service discovery and recommends experiments from monitoring; Krkn-AI feeds past results back into the next generation of scenarios; Steadybit exposes past experiments and post-mortems as MCP tools. None of them asks the customer to write documents for the agent. AI SRE agents (Azure SRE Agent, Datadog Bits AI) add the agent's own memory of past sessions and the docs a team already has.
 
 ### Options
 **What is retrieved:**
-1. **Documentation** (Kubernetes docs, chaos engineering guides). Generic; the model already knows most of it.
-2. **Past experiments and their results** on the same application: hypothesis, action, verdict, timeline summary, and the agent's conclusion. Specific to this system, and exactly what a new run needs to avoid repeating itself.
+1. **Documents written for the agent** (architecture, runbooks). Useful, but nobody maintains documents written only for a tool; they go stale within weeks.
+2. **The agent's own past experiments and conclusions** on the same application. Filled automatically, specific to this system, and exactly what a new run needs.
+3. **Documents the customer already has** (a docs folder in an existing repository), connected, not written.
 
 **The store:**
-1. **ChromaDB,** a dedicated vector store. The plan in the handoff of 2026-11-26. One more component in the chart.
-2. **pgvector in the Postgres we already run.** No new component, and experiments are already rows in `steps`. Needs the extension in the Postgres image.
+1. **ChromaDB,** a dedicated vector store: one more component to run, back up and secure, for a few hundred vectors.
+2. **pgvector in the Postgres we already run:** experiments are already rows there, one backup, and a vector search can be filtered in the same SQL.
+
+**How it is searched:**
+1. **Vectors only.** Finds similar text, but a question like "what did I test on frontend" needs every experiment on frontend and only those; embeddings also barely separate "withstood" from "broke".
+2. **Structured filters only (SQL).** Exact, but cannot find a similar failure on another service written in other words.
+3. **Hybrid:** filter on the fields (namespace, workload, action type, verdict), then rank by similarity.
+
+**Who decides when to retrieve:**
+1. **The orchestrator, before the first LLM call** (the plan of 2026-11-26): the retrieval guesses what the run will need, and fills the context up front.
+2. **The model, through a tool** (agentic RAG): it searches when it is about to plan an experiment on a workload, or when a result looks like something seen before.
 
 ### Decision
-Past experiments (option 1 of the first question). The store is to be decided before it is built: ChromaDB as planned, or pgvector to avoid a new component. Retrieval happens in the orchestrator, before the first LLM call, like discovery, and the retrieved experiments go into the prompt with their run and step ids.
+- **What:** option 2 now; option 3 later (`kind = doc` in the same table). The dependency graph of an application is not retrieved: it is discovery, and comes from the environment the services are configured with (`calls`, a follow-up in observe).
+- **Store:** pgvector. The Postgres image becomes `pgvector/pgvector` on Postgres 17.
+- **Embeddings:** fastembed (`BAAI/bge-small-en-v1.5`, 384 dimensions, ONNX on CPU) in the orchestrator, so no text of the customer leaves the cluster to be embedded.
+- **Search:** hybrid, in one query: `WHERE namespace = <the run's namespace>` (always, set by the orchestrator, never by the model) and optionally the workload, then `ORDER BY embedding <=> query LIMIT 5`.
+- **Retrieval:** a second tool of the model, `search_knowledge(query, workload)`, run by the orchestrator and recorded as a step like every other call. The prompt tells the model to search before planning an experiment on a workload.
+- **What is written,** at the end of every run, by the orchestrator:
+  - **One chunk per experiment, built by code from the stored JSON** (action, hypothesis, verdict, the numbers per journey), with `workload`, `action_type` and `verdict` as columns. The model cannot remember an experiment that did not happen, or remember it better than it went.
+  - **One chunk per section of the model's summary,** marked `kind = summary`: an interpretation, not a fact.
+  - A `content_hash` per chunk, so indexing a run twice adds nothing.
 
 ### Consequences
-- **Gains:** a second run can confirm what the first left unconfirmed and test what it suggested next.
-- **Trade-offs:** results from an older version of the application may mislead; each retrieved experiment must carry its date and run.
+- **Gains:** a run can skip what is known, check whether a known weakness was fixed, and spend its budget deeper; every retrieved chunk carries its run and step, so it can be cited and checked. No new component, and nothing for the customer to write.
+- **Trade-offs:** results from an older version of the application can mislead, so every chunk carries its run and date. A wrong conclusion in a summary can be carried into the next run; this is why experiments are indexed from their data and summaries are marked as interpretation. The model may not call the tool; the prompt asks it to. Changing the embedding model means indexing everything again.
+- **Not solved:** connectors to wikis and incident tools; reranking; learning from a person's corrections.
 
 ### In the code
-- Not built yet.
+- Planned: `charts/chaos-agent` (Postgres image), `orchestrator/schema.sql` (`knowledge_chunks`), `orchestrator/knowledge.py` (chunks, embeddings, search), `orchestrator/agent.py` (the tool, the prompt, indexing at the end of a run).
 
 
 ---
 
 <a id="adr-0034"></a>
 
-## ADR-0034: GitHub Actions runs the cheap checks on every change
+## ADR-0034: GitHub Actions runs the cheap checks on every change: lint, unit tests, the chart on kind, and the image
 
-**Status:** Proposed, 2026-11-26
-**Related:** ADR-0028 (image hardening), ADR-0032 (eval)
+**Status:** Accepted, 2026-11-27 (proposed 2026-11-26)
+**Related:** ADR-0028 and ADR-0037 (the image), ADR-0032 (eval), ADR-0016 (admission policy)
 
 ### Context
-Every change to the agent can break it in ways that only show up in a 20-minute run against the lab. CI is a course requirement. The question: what runs on every change, and what does not?
+Every change to the agent can break it in ways that only show up in a 20-minute run against the lab. CI is a course requirement. Two questions: what runs on every change, and how is each part checked?
 
 ### Options
+**What runs on every change:**
 1. **The full eval on every pull request** (kind on the runner, a run with the model). The strongest signal; slow, flaky on shared runners, and it costs tokens on every push.
 2. **The cheap, deterministic checks on every change; the eval on demand.**
 
+**How the chart is checked:**
+1. **Static only:** `helm lint` and `helm template`. Fast, but an expression in the ValidatingAdmissionPolicy is only type-checked by a real API server, which writes the result into the policy's status.
+2. **`ct` (chart-testing) with an install on kind.** Built for repositories with many charts (changed-chart detection, upgrade tests against the last release); `ct install` removes the release right away, before the type-check can be read.
+3. **Static checks, refusals, and `helm install` on kind, followed by a check of the policies' type-check status.**
+
 ### Decision
-Option 2. On every push and pull request:
-- **Lint:** pyflakes on `orchestrator/` and `servers/mcp/`.
-- **Unit tests** for the deterministic parts: `run_config` (loading and validation), `experiment` (statuses, timeline, verdicts), `runner.check`, `probe.summarize` and `concurrent_users`, `disrupt.forbidden_fields` and `clean`.
-- **The chart:** `helm lint` and `helm template` with the lab values.
-- **The image:** build, push by digest, and a Trivy scan that fails on high or critical vulnerabilities.
+Option 2 for what runs, and option 3 for the chart. One workflow, `ci`, on every push to `main` and every pull request, with `permissions: contents: read`, every action pinned to a commit SHA, `persist-credentials: false`, a timeout per job, and one run per ref at a time:
+- **`lint`:** ruff (`--select F`) on `orchestrator/` and `servers/mcp/`.
+- **`test`:** the unit tests (pytest) on Python 3.15, the version of the image; the servers' dependencies installed with `--require-hashes`. The tests use their own fixtures, never the lab's files.
+- **`chart`:** Helm 4.3.2 (the version used locally).
+  - `helm lint --strict` and `kubeconform -strict` on the chart rendered with `ci/all-levels-values.yaml` (every level on, `nodeActions: whole_node`, two namespaces). kubeconform is downloaded with its checksum checked.
+  - **Refusals:** the chart must fail, with the expected message, on a missing `allowedNamespaces`, a missing image tag, and an unknown `nodeActions`.
+  - **On kind:** the MCP image built in the job and loaded into the cluster, `helm install --wait`, then every ValidatingAdmissionPolicy must reach `observedGeneration` 1 with no `expressionWarnings`. Cluster state is printed on failure, only if the cluster came up.
+- **`image`:** after the other three pass. Built with the Docker CLI, scanned by Trivy (pinned action and binary) that fails on fixable high and critical vulnerabilities; on `main` only, pushed to GHCR as `sha-<commit>`, its digest written to the job summary, and two attestations signed through GitHub's OIDC (Sigstore): SLSA build provenance and an SPDX SBOM made by Trivy. `packages: write`, `id-token: write` and `attestations: write` are granted to this job only.
+
+**Why pinning by SHA matters here:** in March 2026 most version tags of `aquasecurity/trivy-action` were force-pushed to code that stole CI secrets; a job that can push images and request OIDC tokens must not run an action by a movable tag.
 
 ### Consequences
-- **Gains:** most regressions (a broken validation, a template that does not render, a vulnerable dependency) are caught in minutes, for free.
-- **Trade-offs:** CI does not prove that the agent still finds things; that stays a manual eval run until it can run on a schedule.
+- **Gains:** a broken validation, a template that does not render, a CEL expression with a type error, or a vulnerable dependency is caught in minutes, for free. Every pushed image can be verified with `gh attestation verify`.
+- **Trade-offs:** the chart job takes about five minutes, and the image waits for it. No build cache (no buildx): a build takes about a minute. The image is built twice, once for kind and once to push.
+- **Not solved:** CI does not prove that the agent still finds things; that stays a manual eval run. Base image digests are bumped by hand (follow-up: Dependabot, with both Chainguard images in one group).
 
 ### In the code
-- Not built yet. Planned: `.github/workflows/`. Today the manual checks live in `orchestrator/tests/` and `servers/mcp/tests/`.
-
+- `.github/workflows/ci.yaml`: the jobs `lint`, `test`, `chart` and `image`.
+- `charts/chaos-agent/ci/all-levels-values.yaml`: the values the chart is checked with.
+- `pytest.ini`, `orchestrator/tests/unit/`, `servers/mcp/tests/unit/`.
 
 
 ---
@@ -1371,6 +1407,82 @@ Option 3.
 - `orchestrator/runner.py`: `check` (`run_config.denied`).
 - `orchestrator/agent.py`: `format_rules`.
 - `lab/apps/boutique/roe.yaml`: `deny`, with the reason for each entry.
+
+---
+
+<a id="adr-0036"></a>
+
+## ADR-0036: One bad second before the action is noise, as it is after it
+
+**Status:** Accepted, 2026-11-27
+**Changes:** the inconclusive rule of ADR-0023
+**Related:** ADR-0023 (the judge), ADR-0025 (steady check)
+
+### Context
+In run 30, 3 of 13 experiments were inconclusive (steps 44, 93, 100). In every one the steady check was clean (`..........`), and the seconds before the action held exactly one `s` (`s...`, `.s..`), never an `x`. At 2 users per second, a second's p95 is in practice its slowest request, so one slow request makes the whole second slow. After the action, one bad second was already treated as noise (`MIN_BROKEN_S = 2`); before it, one bad second voided an experiment that had been paid for.
+
+### Options
+1. **Keep it strict.** Safe, but one slow request wastes an experiment of the budget.
+2. **Measure more users per second,** so a second's p95 is a real percentile. Treats the cause, but loads the system more; it stays a setting of the application in `target.yaml`.
+3. **A longer window before the action.** More seconds, more chances for one slow request: makes it worse.
+4. **The same tolerance on both sides of the action:** inconclusive only with at least `MIN_BROKEN_S` bad seconds in the baseline and before the action together.
+
+### Decision
+Option 4. The steady check (`wait_for_steady`) stays strict on purpose: when it fails it waits and tries again, which costs time, not an experiment, and it is the gate that gives the system time to recover from the last experiment.
+
+### Consequences
+- **Gains:** in run 31, after the change, no experiment was inconclusive (14 calls, 13 verdicts).
+- **Trade-offs:** a system that flickers with an isolated bad second passes as steady before the action, as it would pass as unbroken after it. A system that is really unsteady is caught by the strict steady check, and by the stricter check against the system's own normal that is still to be designed.
+
+### In the code
+- `orchestrator/experiment.py`: the inconclusive condition in `judge`.
+- `orchestrator/tests/unit/test_experiment.py`: one bad second before the action, two bad seconds, a bad second in the baseline and one before the action adding up, and a bad second before the action not counted in `broken_s`.
+
+
+---
+
+<a id="adr-0037"></a>
+
+## ADR-0037: The MCP image runs on Chainguard Python with no shell and no pip, scanned, and signed with provenance and an SBOM
+
+**Status:** Accepted, 2026-11-27
+**Supersedes:** ADR-0028
+**Related:** ADR-0034 (CI), ADR-0016 (denylist), ADR-0029 (env values)
+
+### Context
+The disrupt server can change almost anything in the tested namespaces, so its image is part of the safety model (ADR-0028). The first Trivy scan in CI failed the build on a fixed high vulnerability in `libzstd1` from the Debian base of `python:3.12-slim`: Debian had the fix, the official image had not been rebuilt yet. The second scan, on the new base, flagged setuptools 70.3.0 inside pip's own vendored copy of `pkg_resources`, from the pip that `venv` installs into the environment.
+
+### Options
+**The base image:**
+1. **Stay on `python:3.12-slim` and upgrade the one package** in the Dockerfile until the base is rebuilt. Quick, but the image keeps a shell and a package manager, and the same wait comes back with the next fix.
+2. **`python:3.12-alpine`.** musl: the locked wheels are built for glibc, so the hashed lock would not install.
+3. **distroless Python.** No shell, but Debian's Python 3.11, and the same pace of fixes.
+4. **Chainguard Python (Wolfi),** rebuilt daily with near-zero known vulnerabilities, no shell and no package manager at runtime. The free tier offers only `latest` (today Python 3.15) and `latest-dev`.
+
+**pip in the image:**
+1. **Keep it,** and ignore the finding: the vulnerable code is not in pip's copy. But nothing runs pip at runtime.
+2. **A venv without pip,** filled by the pip of the build stage.
+
+### Decision
+Option 4 and option 2.
+- **Multi-stage:** `cgr.dev/chainguard/python:latest-dev` builds the venv; `cgr.dev/chainguard/python:latest` runs it. Both pinned by digest, and the two digests are taken from the same build of Chainguard and bumped together: the venv is linked to that exact Python.
+- **No pip in the venv:** `python -m venv --without-pip`, then `python -m pip --python /app/venv/bin/python install --require-hashes`, so the installer stays in the build stage.
+- **Python 3.15 everywhere:** the image, and the `lint` and `test` jobs in CI. Every locked dependency ships a cp315 wheel and its hash was already in the lock.
+- **User 65532** (`nonroot` in the image), set in the chart as `runAsUser` and `runAsGroup`, so the pod's identity matches `/etc/passwd`.
+- **`ENTRYPOINT ["python", "server.py"]`,** since Chainguard's image already has `python` as its entrypoint and a `CMD` would be appended to it.
+- **Unchanged from ADR-0028:** the hashed lock, `runAsNonRoot`, `seccompProfile: RuntimeDefault`, no privilege escalation, all capabilities dropped, a read-only root filesystem with emptyDirs, and a minimal environment for k6.
+- **In CI** (ADR-0034): Trivy before the push, and signed provenance and SBOM after it.
+
+### Consequences
+- **Gains:** the scan is clean; a process that gets into the container finds no shell and no pip to install with; every image can be traced to the commit and workflow that built it.
+- **Trade-offs:** no `kubectl exec ... sh`; debugging is by `kubectl debug` with an ephemeral container, or `python -c`. The free tier's `latest` moves across Python versions without notice, so the digests are the only pin, and they must be bumped (follow-up: Dependabot, one group for both). Python 3.15 is new, and less proven than 3.12.
+- **Not solved:** an old digest could in principle be removed from Chainguard's registry; the build would then fail loudly with `manifest unknown`.
+
+### In the code
+- `servers/mcp/Dockerfile`: the two stages, the venv without pip, `ENTRYPOINT`.
+- `charts/chaos-agent/templates/mcp.yaml`: `runAsUser` and `runAsGroup` 65532.
+- `.github/workflows/ci.yaml`: `python-version: "3.15"`, the `image` job.
+
 
 ---
 

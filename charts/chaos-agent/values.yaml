@@ -1,8 +1,8 @@
 postgresql:
   enabled: true
   image:
-    repository: postgres
-    tag: 17-alpine
+    repository: pgvector/pgvector
+    tag: 0.8.7-pg17
   auth:
     database: chaos
     username: chaos
@@ -34,10 +34,10 @@ mcp:
       enabled: true
       # Caps on every measurement, whatever an application's target.yaml asks for.
       limits:
-        longestK6RunS: 300                 # the longest single run of k6, in seconds
-        longestRequestWaitS: 30            # the most fail_request_after_s may be
-        maxNewUsersPerSecond: 10           # per journey
-        maxConcurrentUsersPerJourney: 50   # users in flight at once, per journey
+        longestK6RunS: 300 # the longest single run of k6, in seconds
+        longestRequestWaitS: 30 # the most fail_request_after_s may be
+        maxNewUsersPerSecond: 10 # per journey
+        maxConcurrentUsersPerJourney: 50 # users in flight at once, per journey
     disrupt:
       enabled: false
       # Node and zone failures. none; scope_only: cordon a node and evict only the pods in
