@@ -11,3 +11,7 @@ __pycache__/
 
 # Helm build output
 *.tgz
+
+.pytest_cache
+
+.ruff_cache
