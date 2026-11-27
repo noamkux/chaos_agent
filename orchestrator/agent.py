@@ -104,17 +104,21 @@ def format_profile(target):
     """The application's profile for the prompt: entrypoint, journeys and the steady state."""
     journeys = ", ".join(j["name"] + (" (writes data)" if j.get("writes") else "") for j in target["journeys"])
     steady = target["steady_state"]
+    m = target["measurement"]
     return (f"Entrypoint: Service {target['entrypoint']['service']}, port {target['entrypoint']['port']}.\n"
             f"Journeys: {journeys}.\n"
             f"Steady state, judged every second for every journey: success rate at least "
-            f"{steady['success_rate']} and p95 at most {steady['p95_ms']} ms.")
+            f"{steady['success_rate']} and p95 at most {steady['p95_ms']} ms.\n"
+            f"Measurement: {m['new_users_per_second']} new users per second for every journey; a request with "
+            f"no answer after {m['fail_request_after_s']} s fails; {m['measure_before_action_s']} s are measured "
+            f"before the change and {m['measure_after_restore_s']} s after the restore.")
 
 def format_rules(roe, can_experiment):
     """The Rules of Engagement for the prompt, so the model does not spend experiments that would be refused."""
     if not can_experiment:
         return "This run cannot run experiments: its level does not allow changes."
     protected = ", ".join(roe["protected_workloads"]) or "none"
-    return (f"Experiments in this run: at most {roe['max_experiments']}. hold_s: at most {roe['max_hold_s']}.\n"
+    return (f"Experiments in this run: at most {roe['max_experiments']}. restore_after_s: at most {roe['max_restore_after_s']}.\n"
             f"Journeys that write data: {'allowed' if roe['allow_write_journeys'] else 'not allowed'}.\n"
             f"Protected workloads, to measure and never change: {protected}.\n"
             f"API groups that can never be changed: {', '.join(roe['deny_groups']) or 'none'}.\n"

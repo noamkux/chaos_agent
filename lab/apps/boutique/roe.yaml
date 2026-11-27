@@ -18,7 +18,7 @@ protected_workloads: [redis-cart]
 
 # Limits per run.
 max_experiments: 15
-max_hold_s: 120
+max_restore_after_s: 120
 
 # API groups the agent may never change, on top of the kinds the disrupt server always refuses.
 # Their controllers act outside the cluster or across it, where a snapshot cannot restore anything.

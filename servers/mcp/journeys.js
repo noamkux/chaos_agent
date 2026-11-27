@@ -14,12 +14,13 @@ export const options = {
     discardResponseBodies: true,
     scenarios: Object.fromEntries(Object.keys(config.journeys).map((name) => [name, {
         executor: 'constant-arrival-rate',
-        rate: config.rate,
+        rate: config.new_users_per_second,
         timeUnit: '1s',
-        duration: `${config.duration_s}s`,
-        preAllocatedVUs: config.max_vus,
-        maxVUs: config.max_vus,
-        gracefulStop: `${config.timeout_s}s`,
+        duration: `${config.measure_for_s}s`,
+        // All of them up front: starting users mid-run would happen just when the system gets stuck.
+        preAllocatedVUs: config.concurrent_users[name],
+        maxVUs: config.concurrent_users[name],
+        gracefulStop: `${config.fail_request_after_s}s`,
         exec: 'run',
         env: { JOURNEY: name },
     }])),
@@ -34,7 +35,7 @@ export function run() {
     let error = null;
     for (const step of config.journeys[name]) {
         const res = http.request(step.method, config.base_url + step.path, step.form || null,
-            { jar, timeout: `${config.timeout_s}s`, tags: { journey: name } });
+            { jar, timeout: `${config.fail_request_after_s}s`, tags: { journey: name } });
         if (res.status === 0) {
             error = res.error_code === 1050 ? 'timeout' : `network error ${res.error_code}`;
             break;

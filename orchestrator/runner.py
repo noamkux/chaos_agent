@@ -21,13 +21,7 @@ DELETE_POD = "disrupt__delete_pod"
 # Every server tool an experiment needs; run_experiment is offered only when all of them are loaded.
 EXPERIMENT_TOOLS = {MEASURE, SNAPSHOT, PATCH, RESTORE, DELETE_POD}
 
-# Seconds of the timeline. The warm-up is measured and thrown away: the first users after a quiet
-# period can be slow for reasons that have nothing to do with the experiment.
-WARMUP_S = 5
-BASELINE_S = 10
-LEAD_S = 5
-RECOVERY_S = 30
-RATE = 2
+# The timings and the rate of every measurement come from target.yaml (measurement), loaded by run_config.
 
 
 def run_experiment_tool(namespaces, journey_names):
@@ -35,11 +29,13 @@ def run_experiment_tool(namespaces, journey_names):
     return {
         "name": RUN_EXPERIMENT_NAME,
         "description": (
-            "Run one chaos experiment and get its measured result. The orchestrator measures a baseline, "
-            "makes the change, keeps measuring the journeys you chose, restores the change after hold_s "
-            "seconds, and judges the result against the steady state: broke, withstood or inconclusive. "
+            "Run one chaos experiment and get its measured result. The orchestrator checks that the system "
+            "is steady, makes the change, keeps measuring the journeys you chose, restores the change after "
+            "restore_after_s seconds, and judges the result against the steady state: broke, withstood or "
+            "inconclusive. If the system does not get steady before the change, nothing is changed and the "
+            "experiment is not counted: not_run. "
             "Actions: patch (a strategic merge patch on any object in scope; it is snapshotted first and "
-            "restored after hold_s) and delete_pod (one running pod of a workload; its controller replaces "
+            "restored after restore_after_s) and delete_pod (one running pod of a workload; its controller replaces "
             "it, nothing is restored). The timeline has one character per second: . ok, s slow, x failed, "
             "_ no answer, | the action and the restore."
         ),
@@ -60,7 +56,8 @@ def run_experiment_tool(namespaces, journey_names):
                 },
                 "journeys": {"type": "array", "items": {"type": "string", "enum": journey_names},
                              "description": "The journeys to measure, from the profile."},
-                "hold_s": {"type": "integer", "description": "For patch: seconds before the change is restored."},
+                "restore_after_s": {"type": "integer",
+                                    "description": "For patch: seconds the change stays in place before it is restored."},
             },
             "required": ["hypothesis", "action", "journeys"],
         },
@@ -94,18 +91,42 @@ def check(args, roe, target, done):
     if action["type"] == "patch":
         if not isinstance(action.get("patch"), dict) or not action["patch"]:
             return "a patch action needs a non-empty patch"
-        hold = args.get("hold_s")
-        if not run_config.positive_int(hold) or hold > roe["max_hold_s"]:
-            return f"hold_s must be 1 to {roe['max_hold_s']}"
+        restore_after = args.get("restore_after_s")
+        if not run_config.positive_int(restore_after) or restore_after > roe["max_restore_after_s"]:
+            return f"restore_after_s must be 1 to {roe['max_restore_after_s']}"
     return None
 
 
-def without_warmup(measurement):
-    """The baseline without its warm-up seconds, renumbered from 0."""
-    return {"duration_s": measurement["duration_s"] - WARMUP_S,
+def without_warmup(measurement, warmup):
+    """A steady check without its warm-up seconds, renumbered from 0."""
+    return {"measure_for_s": measurement["measure_for_s"] - warmup,
             "not_sent": measurement["not_sent"],
-            "seconds": [{**s, "second": s["second"] - WARMUP_S}
-                        for s in measurement["seconds"] if s["second"] >= WARMUP_S]}
+            "seconds": [{**s, "second": s["second"] - warmup}
+                        for s in measurement["seconds"] if s["second"] >= warmup]}
+
+
+async def wait_for_steady(measure, journeys, steady, settings):
+    """Measure until every second of every journey is steady, up to steady_check_attempts times, waiting
+    between tries so a system still recovering from the last experiment gets time. Returns the steady
+    measurement without its warm-up (None if the system never got steady), the step of every try, and
+    what went wrong in the last try."""
+    warmup = settings["warmup_ignored_s"]
+    steps = []
+    problem = {}
+    for attempt in range(settings["steady_check_attempts"]):
+        if attempt:
+            await asyncio.sleep(settings["wait_between_steady_checks_s"])
+        measured = await measure(warmup + settings["steady_check_s"])
+        steps.append(measured["step"])
+        if measured["is_error"]:
+            return None, steps, {"reason": f"steady check failed: {measured['content']}"}
+        check = without_warmup(measured["content"], warmup)
+        statuses = {j: experiment.statuses_of(check, j, steady) for j in journeys}
+        if all(status == "ok" for per_journey in statuses.values() for status in per_journey):
+            return check, steps, {}
+        problem = {"reason": f"not steady after {attempt + 1} steady checks",
+                   "last_check": {j: experiment.timeline(per_journey, set()) for j, per_journey in statuses.items()}}
+    return None, steps, problem
 
 
 def second_of(moment, measurement):
@@ -129,37 +150,34 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
     journeys = {j["name"]: j["steps"] for j in target["journeys"] if j["name"] in args["journeys"]}
     steady = target["steady_state"]
     entry = target["entrypoint"]
-    hold = args.get("hold_s", 0) if action["type"] == "patch" else 0
+    settings = target["measurement"]
+    restore_after = args.get("restore_after_s", 0) if action["type"] == "patch" else 0
     target_args = {"namespace": action["namespace"], "kind": action["kind"], "name": action["name"]}
-    state["experiments"] += 1
 
     async def call(name, call_args):
         return json.loads(await tools.call_tool(conn, run_id, server_tools, scope, name, call_args))
 
-    def measure(duration):
+    def measure(seconds):
         return call(MEASURE, {"namespace": namespace, "service": entry["service"], "port": entry["port"],
-                              "journeys": journeys, "duration_s": duration, "rate": RATE})
+                              "journeys": journeys, "measure_for_s": seconds,
+                              "new_users_per_second": settings["new_users_per_second"],
+                              "fail_request_after_s": settings["fail_request_after_s"]})
 
     def finish(result):
         db.finish_step(conn, step_id, result)
         return json.dumps(result)
 
-    # 1. Baseline: nothing is touched if the system is not steady to begin with.
-    base_call = await measure(WARMUP_S + BASELINE_S)
-    if base_call["is_error"]:
-        return finish({"verdict": "inconclusive", "reason": f"baseline failed: {base_call['content']}"})
-    baseline = without_warmup(base_call["content"])
-    unsteady = [j for j in journeys if any(s != "ok" for s in experiment.statuses_of(baseline, j, steady))]
-    if unsteady:
-        return finish({"verdict": "inconclusive", "reason": f"not steady before the experiment: {unsteady}",
-                       "baseline": {j: experiment.timeline(experiment.statuses_of(baseline, j, steady), set())
-                                    for j in journeys},
-                       "steps": {"baseline": base_call["step"]}})
+    # 1. Steady check: nothing is touched, and the experiment is not counted, until the system is steady.
+    baseline, check_steps, problem = await wait_for_steady(measure, list(journeys), steady, settings)
+    steps = {"steady_checks": check_steps}
+    if baseline is None:
+        return finish({"verdict": "not_run", "counted": False, **problem, "steps": steps})
+    state["experiments"] += 1
 
-    # 2. Measure in the background, through the action, the hold and the recovery.
-    measuring = asyncio.create_task(measure(LEAD_S + hold + RECOVERY_S))
-    await asyncio.sleep(LEAD_S)
-    steps = {"baseline": base_call["step"]}
+    # 2. Measure in the background, through the action, the time it stays and the recovery.
+    before_action = settings["measure_before_action_s"]
+    measuring = asyncio.create_task(measure(before_action + restore_after + settings["measure_after_restore_s"]))
+    await asyncio.sleep(before_action)
     restore_time = None
 
     # 3. The action. For a patch, the snapshot and its undo are written before the change.
@@ -180,7 +198,7 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
             db.finish_undo(conn, undo_id, "done")
             measuring.cancel()
             return finish({"error": f"patch rejected: {changed['content']}", "steps": steps})
-        await asyncio.sleep(hold)
+        await asyncio.sleep(restore_after)
         restored = await call(RESTORE, undo["args"])
         steps["restore"] = restored["step"]
         if restored["is_error"]:

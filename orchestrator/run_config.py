@@ -13,7 +13,15 @@ DEFAULT_DENY_GROUPS = ["argoproj.io", "fluxcd.io", "services.k8s.aws", "crosspla
 
 # The safe value of every optional RoE setting: an RoE that says nothing allows nothing extra.
 ROE_DEFAULTS = {"allow_write_journeys": False, "allow_node_actions": False,
-                "max_experiments": 10, "max_hold_s": 60, "protected_workloads": []}
+                "max_experiments": 10, "max_restore_after_s": 60, "protected_workloads": []}
+
+# The measurement when target.yaml leaves a setting out.
+MEASUREMENT_DEFAULTS = {"new_users_per_second": 2, "fail_request_after_s": 10, "warmup_ignored_s": 5,
+                        "steady_check_s": 10, "steady_check_attempts": 4, "wait_between_steady_checks_s": 15,
+                        "measure_before_action_s": 5, "measure_after_restore_s": 30}
+
+# Below these the judge has too few seconds to tell a steady system from noise.
+MEASUREMENT_MINIMUMS = {"steady_check_s": 5, "measure_before_action_s": 3}
 
 
 def load_yaml(path):
@@ -40,7 +48,7 @@ def load_roe(path):
     for key in ("allow_write_journeys", "allow_node_actions"):
         if not isinstance(roe[key], bool):
             raise ValueError(f"{path}: {key} must be true or false")
-    for key in ("max_experiments", "max_hold_s"):
+    for key in ("max_experiments", "max_restore_after_s"):
         if not positive_int(roe[key]):
             raise ValueError(f"{path}: {key} must be a whole number above 0")
     roe.setdefault("deny_groups", DEFAULT_DENY_GROUPS)
@@ -81,6 +89,16 @@ def load_target(path):
         raise ValueError(f"{path}: steady_state.success_rate must be above 0 and at most 1")
     if not positive_int(p95):
         raise ValueError(f"{path}: steady_state.p95_ms must be a whole number above 0")
+    section = target.get("measurement") or {}
+    if not isinstance(section, dict):
+        raise ValueError(f"{path}: measurement must be a mapping")
+    for key, value in section.items():
+        minimum = MEASUREMENT_MINIMUMS.get(key, 1)
+        if key not in MEASUREMENT_DEFAULTS:
+            raise ValueError(f"{path}: measurement.{key} is not a known setting")
+        if not positive_int(value) or value < minimum:
+            raise ValueError(f"{path}: measurement.{key} must be a whole number of at least {minimum}")
+    target["measurement"] = {**MEASUREMENT_DEFAULTS, **section}
     return target
 
 

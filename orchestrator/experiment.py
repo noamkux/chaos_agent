@@ -1,7 +1,7 @@
 """Judging an experiment: decide from the measurements, not from the model, whether the system broke.
 
 Terms used in this file:
-- measurement: what measure_journeys returns: {"duration_s", "not_sent", "seconds": [...]}, where each
+- measurement: what measure_journeys returns: {"measure_for_s", "not_sent", "seconds": [...]}, where each
   entry of seconds is {"second": n, "journeys": {name: second_result}}.
 - second_result: what happened to one journey in one second, by the second users arrived:
   {"ok": 2, "failed": 0, "p95_ms": 85, "errors": {"timeout": 1}}.
@@ -53,11 +53,11 @@ def statuses_of(measurement, journey, steady_state):
         steady_state: {"success_rate", "p95_ms"} from target.yaml.
 
     Returns:
-        A list with one status per second, from second 0 to duration_s - 1. A second with no result
-        is "no_data", so the list always has duration_s entries.
+        A list with one status per second, from second 0 to measure_for_s - 1. A second with no result
+        is "no_data", so the list always has measure_for_s entries.
     """
     results = {s["second"]: s["journeys"].get(journey) for s in measurement["seconds"]}
-    return [status_of(results.get(second), steady_state) for second in range(measurement["duration_s"])]
+    return [status_of(results.get(second), steady_state) for second in range(measurement["measure_for_s"])]
 
 
 def timeline(statuses, marks):
@@ -150,7 +150,7 @@ def judge(baseline, measurement, journeys, steady_state, action_second, restore_
         recovered = recovered_at(statuses, recover_from)
         results[journey] = {
             "timeline": timeline(statuses, {action_second, restore_second} - {None}),
-            "baseline": phase(baseline, journey, 0, baseline["duration_s"]),
+            "baseline": phase(baseline, journey, 0, baseline["measure_for_s"]),
             "after_action": phase(measurement, journey, action_second, len(statuses)),
             "broken_s": sum(status != "ok" for status in statuses[action_second:]),
             "not_sent": measurement["not_sent"].get(journey, 0),

@@ -57,6 +57,16 @@ spec:
               value: {{ join "," $root.Values.mcp.allowedNamespaces | quote }}
             - name: PORT
               value: {{ $root.Values.mcp.port | quote }}
+            {{- with $config.limits }}
+            - name: LONGEST_K6_RUN_S
+              value: {{ .longestK6RunS | quote }}
+            - name: LONGEST_REQUEST_WAIT_S
+              value: {{ .longestRequestWaitS | quote }}
+            - name: MAX_NEW_USERS_PER_SECOND
+              value: {{ .maxNewUsersPerSecond | quote }}
+            - name: MAX_CONCURRENT_USERS_PER_JOURNEY
+              value: {{ .maxConcurrentUsersPerJourney | quote }}
+            {{- end }}
             # Where the disrupt server keeps its snapshots: its own namespace.
             - name: POD_NAMESPACE
               valueFrom:

@@ -16,16 +16,17 @@ from scope import check_scope
 
 JOURNEYS_SCRIPT = Path(__file__).parent / "journeys.js"
 
-# Caps enforced by the server. The Rules of Engagement can lower them, never raise them.
-MAX_DURATION_S = 300
-MAX_RATE = 10
-MAX_VUS = 50
-TIMEOUT_S = 10
+# Caps set by the cluster admin in the chart values (mcp.levels.probe.limits) and enforced on every
+# measurement, whatever target.yaml asks for. The defaults are for a run outside the chart.
+LONGEST_K6_RUN_S = int(os.environ.get("LONGEST_K6_RUN_S", "300"))
+LONGEST_REQUEST_WAIT_S = int(os.environ.get("LONGEST_REQUEST_WAIT_S", "30"))
+MAX_NEW_USERS_PER_SECOND = int(os.environ.get("MAX_NEW_USERS_PER_SECOND", "10"))
+MAX_CONCURRENT_USERS_PER_JOURNEY = int(os.environ.get("MAX_CONCURRENT_USERS_PER_JOURNEY", "50"))
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"}
 
 
 def service_url(namespace, service, port):
-    """The base URL of a Service port, after checking that the Service exists and declares the port."""
+    """Checks that the service that was requested to be tested actially exsist"""
     check_scope(namespace)
     try:
         svc = core.read_namespaced_service(service, namespace)
@@ -60,13 +61,22 @@ async def run_k6(config):
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
     try:
         _, stderr = await asyncio.wait_for(process.communicate(),
-                                           config["duration_s"] + 2 * config["timeout_s"] + 30)
+                                           config["measure_for_s"] + 2 * config["fail_request_after_s"] + 30)
     except asyncio.TimeoutError:
         process.kill()
         raise ToolError("k6 did not finish in time")
     if process.returncode != 0:
         raise ToolError(f"k6 failed: {stderr.decode()[-500:]}")
     return out_file
+
+
+def concurrent_users(journeys, new_users_per_second, fail_request_after_s):
+    """How many users each journey may have in flight at once. In the worst case every step waits until it
+    fails while new users keep arriving, so a journey needs new_users_per_second x fail_request_after_s x
+    its steps. Capped by MAX_CONCURRENT_USERS_PER_JOURNEY: past the cap, k6 reports the users it could not
+    start as not sent, which is what real users would meet."""
+    return {name: min(MAX_CONCURRENT_USERS_PER_JOURNEY, new_users_per_second * fail_request_after_s * len(steps))
+            for name, steps in journeys.items()}
 
 
 def p95(values):
@@ -108,15 +118,21 @@ def summarize(out_file, names):
             "seconds": [{"second": s, "journeys": seconds[s]} for s in sorted(seconds)]}
 
 
-async def measure_journeys(namespace: str, service: str, port: int,
-                           journeys: dict[str, list[dict]], duration_s: int, rate: int) -> dict[str, Any]:
-    """Run every journey at a fixed rate for duration_s seconds, as new users, and report each second of arrival: journeys that succeeded, failed, p95 latency and errors."""
+async def measure_journeys(namespace: str, service: str, port: int, journeys: dict[str, list[dict]],
+                           measure_for_s: int, new_users_per_second: int,
+                           fail_request_after_s: int) -> dict[str, Any]:
+    """Run every journey for measure_for_s seconds with new_users_per_second new users each second, whatever the system does, and report each second of arrival: journeys that succeeded, failed, p95 latency and errors. A request with no answer after fail_request_after_s seconds fails."""
     base_url = service_url(namespace, service, port)
     check_journeys(journeys)
-    if not 0 < duration_s <= MAX_DURATION_S or not 0 < rate <= MAX_RATE:
-        raise ToolError(f"duration_s must be 1 to {MAX_DURATION_S} and rate 1 to {MAX_RATE}")
-    config = {"base_url": base_url, "journeys": journeys, "rate": rate, "duration_s": duration_s,
-              "max_vus": MAX_VUS, "timeout_s": TIMEOUT_S}
+    if not 0 < measure_for_s <= LONGEST_K6_RUN_S:
+        raise ToolError(f"measure_for_s must be 1 to {LONGEST_K6_RUN_S}")
+    if not 0 < new_users_per_second <= MAX_NEW_USERS_PER_SECOND:
+        raise ToolError(f"new_users_per_second must be 1 to {MAX_NEW_USERS_PER_SECOND}")
+    if not 0 < fail_request_after_s <= LONGEST_REQUEST_WAIT_S:
+        raise ToolError(f"fail_request_after_s must be 1 to {LONGEST_REQUEST_WAIT_S}")
+    config = {"base_url": base_url, "journeys": journeys, "new_users_per_second": new_users_per_second,
+              "measure_for_s": measure_for_s, "fail_request_after_s": fail_request_after_s,
+              "concurrent_users": concurrent_users(journeys, new_users_per_second, fail_request_after_s)}
     # k6 starts measuring within about a second of this time.
     started_at = time.time()
     out_file = await run_k6(config)
@@ -126,4 +142,5 @@ async def measure_journeys(namespace: str, service: str, port: int,
         out_file.unlink()
         out_file.with_name("config.json").unlink()
         out_file.parent.rmdir()
-    return {"started_at": started_at, "rate": rate, "duration_s": duration_s, **summary}
+    return {"started_at": started_at, "new_users_per_second": new_users_per_second,
+            "measure_for_s": measure_for_s, **summary}
