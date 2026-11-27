@@ -1,0 +1,10 @@
+mcp:
+  image:
+    tag: ci
+  allowedNamespaces: [shop, pay]
+  levels:
+    observe:
+      enabled: true
+    disrupt:
+      enabled: true
+      nodeActions: whole_node

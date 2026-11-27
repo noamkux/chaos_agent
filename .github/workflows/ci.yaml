@@ -1,4 +1,4 @@
-# Checks every change to the agent: lint and unit tests (the chart and the image come next).
+# Checks every change to the agent: lint, unit tests and the Helm chart (the image comes next).
 name: ci
 
 on:
@@ -44,3 +44,69 @@ jobs:
             - run: pip install --require-hashes -r servers/mcp/requirements.txt
             - run: pip install -r orchestrator/requirements.txt pytest==9.2.0
             - run: python -m pytest -q
+
+    chart:
+        runs-on: ubuntu-24.04
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+            - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+              with:
+                  version: v4.3.2
+            - name: Install kubeconform
+              run: |
+                  curl -fsSLo kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
+                  echo "9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883  kubeconform.tar.gz" | sha256sum --check
+                  tar -xzf kubeconform.tar.gz -C /usr/local/bin kubeconform
+            - name: Lint
+              run: helm lint --strict charts/chaos-agent -f charts/chaos-agent/ci/all-levels-values.yaml
+            - name: Render and validate the manifests
+              run: |
+                  helm template ci charts/chaos-agent -f charts/chaos-agent/ci/all-levels-values.yaml \
+                      | kubeconform -strict -summary -output github
+            - name: The chart refuses unsafe values
+              run: |
+                  refused() {
+                      local expected="$1"; shift
+                      if helm template ci charts/chaos-agent "$@" > /dev/null 2> refused.err; then
+                          echo "::error::the chart rendered, expected it to fail with: $expected"
+                          return 1
+                      fi
+                      if ! grep -q "$expected" refused.err; then
+                          echo "::error::the chart failed for another reason, expected: $expected"
+                          cat refused.err
+                          return 1
+                      fi
+                  }
+                  refused "mcp.allowedNamespaces is required" --set mcp.image.tag=ci
+                  refused "mcp.image.tag is required" --set "mcp.allowedNamespaces={shop}"
+                  refused "nodeActions must be none, scope_only or whole_node" \
+                      --set mcp.image.tag=ci --set "mcp.allowedNamespaces={shop}" \
+                      --set mcp.levels.disrupt.enabled=true --set mcp.levels.disrupt.nodeActions=off
+            - uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
+              with:
+                  cluster_name: chaos-ci
+            - name: Build the MCP image and load it into kind
+              run: |
+                  docker build -t chaos-agent-mcp:ci servers/mcp
+                  kind load docker-image chaos-agent-mcp:ci --name chaos-ci
+            - name: Install
+              run: |
+                  kubectl create namespace shop
+                  kubectl create namespace pay
+                  helm install ci charts/chaos-agent -f charts/chaos-agent/ci/all-levels-values.yaml \
+                      --namespace chaos-system --create-namespace --wait --timeout 5m
+            - name: The API server type-checks every admission policy without warnings
+              run: |
+                  kubectl wait validatingadmissionpolicy --all \
+                      --for=jsonpath='{.status.observedGeneration}'=1 --timeout=60s
+                  kubectl get validatingadmissionpolicy -o json \
+                      | jq -e '[.items[].status.typeChecking.expressionWarnings // [] | length] | add == 0'
+            - name: Show what failed
+              if: failure()
+              run: |
+                  kubectl get pods -A
+                  kubectl get events -n chaos-system --sort-by=.lastTimestamp
+                  kubectl get validatingadmissionpolicy -o yaml
