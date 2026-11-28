@@ -13,7 +13,9 @@ ENV FASTEMBED_CACHE_PATH=/app/models
 # Only what loading the model needs, so a change to the rest of the code does not download it again.
 COPY agent/__init__.py agent/knowledge.py agent/
 COPY storage/__init__.py storage/db.py storage/
-RUN /app/venv/bin/python -c "from agent import knowledge; knowledge.embedder()"
+# The download writes some cache files readable by root only; the runtime user must read all of it.
+RUN /app/venv/bin/python -c "from agent import knowledge; knowledge.embedder()" \
+    && chmod -R a+rX /app/models
 
 FROM python:3.14-slim@sha256:f57c4c23b985d95deea5bc5249e2f9c8a512b4cc9d5d3fd31900cbd2f5f0a604
 # The same nonroot user as the MCP image (65532), so the chart sets one identity for both.
