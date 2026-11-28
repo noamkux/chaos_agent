@@ -350,10 +350,16 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
         return finish({"verdict": "inconclusive", "reason": f"measurement failed: {measured['content']}",
                        "steps": steps})
     measurement = without_warmup(measured["content"], warmup)
-    result = judge.judge(baseline, measurement, list(journeys), steady,
-                              second_of(action_time, measurement),
+    action_second = second_of(action_time, measurement)
+    # The judge compares with the application's own noise, learned from the seconds before the action
+    # of the run's experiments; an inconclusive one is left out, since its seconds were not normal.
+    result = judge.judge(baseline, measurement, list(journeys), steady, action_second,
                               second_of(restore_time, measurement) if restore_time else None,
-                              recover_from_restore=action["type"] != "node_failure")
+                              recover_from_restore=action["type"] != "node_failure",
+                              noise=state.get("noise"))
+    if result["verdict"] != "inconclusive":
+        state["noise"] = judge.add_noise(state.get("noise", {}),
+                                         judge.noise_seconds(measurement, list(journeys), steady, action_second))
     if action["type"] == "node_failure":
         result |= {"nodes": nodes, "mode": action["mode"], "placement_events": placement_events}
         if evictions:
