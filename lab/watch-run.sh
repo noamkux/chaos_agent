@@ -91,6 +91,17 @@ def experiment(result):
                 print(f"  {part} {journey}: {dim}{line}{reset}")
 
 
+def knowledge(results):
+    """A search_knowledge result: one line per chunk, closest first, with the first line of its text."""
+    if not results:
+        print(f"  {dim}nothing found{reset}")
+    for hit in results:
+        # The first line of a chunk already names its run and step, or its run and summary section.
+        first = hit["content"].splitlines()[0] if hit.get("content") else ""
+        line = f"  {hit.get('distance'):<5}  {hit.get('kind'):<10}  {first}"
+        print(line if len(line) <= width else line[:width - 4] + " ...")
+
+
 def step(row):
     header = f"{bold}── step {row['step']}  {row['at']}  {row['name']}{reset}"
     output = row.get("output")
@@ -112,6 +123,10 @@ def step(row):
         print(f"  {compact(output, 500)}")
     elif "verdict" in output:
         experiment(output)
+    elif isinstance(output.get("results"), list):
+        knowledge(output["results"])
+    elif "added" in output:
+        print(f"  added {output['added']} chunks to what later runs can search")
     elif output.get("denied") or output.get("error"):
         print(f"  {red}{output.get('denied') or output.get('error')}{reset}")
     elif output.get("is_error"):

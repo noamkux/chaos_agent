@@ -335,8 +335,8 @@ Option 2. `run_agent` calls `messages.create`, records the response and its toke
 
 ## ADR-0008: One MCP server codebase, deployed once per level, each with its own ServiceAccount
 
-**Status:** Accepted, 2026-11-25
-**Related:** ADR-0009 (levels are permission boundaries), ADR-0010 (orchestrator calls every tool)
+**Status:** Accepted, 2026-11-25 (what the servers give, now that the model calls none of them, added 2026-11-28)
+**Related:** ADR-0009 (levels are permission boundaries), ADR-0010 (orchestrator calls every tool), ADR-0016 (admission policy), ADR-0029 (env values), ADR-0033 (search_knowledge)
 
 ### Context
 Everything that touches the cluster goes through MCP servers: reading objects, sending traffic, changing things. Their permissions differ wildly: reading is harmless, changing is not. The question: how are the tools grouped into servers, and how does each get its permissions?
@@ -358,6 +358,19 @@ Option 3.
 ### Consequences
 - **Gains:** a read-only pod never holds write permissions; one image to build and scan; adding a tool is one line in `TOOLS_BY_LEVEL`.
 - **Trade-offs:** three pods instead of one, and the orchestrator talks to several servers in one run. A tool that needs two levels' permissions must be split.
+
+### What the servers give, when the model calls none of them (2026-11-28)
+Since ADR-0010 the model's tools (`run_experiment`, and `search_knowledge` from ADR-0033) are the orchestrator's own, and only the orchestrator calls the MCP servers. MCP was built for models to call tools directly, so the question came up: what do the servers still give? Four things, none of them about the model:
+- **The permission boundary.** Each level runs in its own pod with its own ServiceAccount and RBAC, and the orchestrator holds no credentials for the cluster at all: it can only call the tools the servers expose, and each server is bounded by its own Role. A compromised orchestrator, or a model that tries something unexpected, has no `kubectl`.
+- **An identity for the admission policy.** The ValidatingAdmissionPolicy (ADR-0016) enforces the never-change list against the disrupt server's ServiceAccount. Without a separate pod with its own identity, the API server could not tell the agent's changes from a person's or a controller's.
+- **Sensitive values stay in the cluster.** Env values and Secrets are dropped inside the server, before anything is returned (ADR-0029); the orchestrator, Postgres and the model never see them.
+- **Running inside the cluster.** k6 sends traffic from the probe pod, on the cluster's network, to `frontend:80`, with no port-forward or Ingress; the orchestrator can run anywhere that reaches the servers (a laptop today, a Job or a hosted service later).
+
+The protocol itself adds a standard interface on top: a schema and a description per tool, tool discovery (`list_tools`), client libraries, servers that can be tested alone (`servers/mcp/tests/try_client.py`), and other clients (Claude Desktop, another agent) that can connect without our orchestrator.
+
+**What is not used today:** a model calling MCP tools directly, the reason most projects choose MCP. The first three points above would hold with plain REST or gRPC as well; today MCP works as our RPC.
+
+**Where it pays off next:** read-only tools. A read tool changes nothing, so it can be offered to the model as it is, with the schema the server defines, through an allowlist of observe tools in the orchestrator, with no wrapper per tool; `inspect_workload` (events, pod status, rollout strategy and probes) is the first. Tools that change something stay behind `run_experiment`, where the orchestrator enforces the RoE. This follows the usual rule for agents: read tools freely, enforcement on what changes. To be recorded in ADR-0010 when it is built.
 
 ### In the code
 - `servers/mcp/server.py`: `LEVEL`, `TOOLS_BY_LEVEL`, the registration loop.
