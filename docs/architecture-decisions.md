@@ -1320,7 +1320,7 @@ Compare with a baseline (option 2); found is what the summary cites (option 2); 
 - `lab/apps/boutique/ground_truth.yaml`: the answer key.
 - `eval/score.py`: `action_matches`, `impact`, `cited_steps`, `score_run`, `score_all` (what earlier runs broke, for the memory measure), `render`, `PRICES`; `WARNING_STEPS` (steps that are not calls).
 - `eval/tests/unit/test_score.py`, with its own ground truth in `fixtures/`; run in CI with the orchestrator's tests.
-- `eval/baseline.py`: the `baseline` plan (`baseline_plan`, from the observe server's workloads and zones) and the `verify` plan (`verify_plan`, the patterns of earlier runs, each twice), through `runner.run_experiment`.
+- `eval/baseline.py`: the `baseline` plan (`baseline_plan`, from the observe server's workloads and zones) the `verify` plan (`verify_plan`, the patterns of earlier runs, each twice), and the `checks` plan (`checks_plan`: frontend with half its CPU limit twice, with a rollout of frontend alone as its control, and the pod of emailservice deleted three times while only home is measured, to tell a weakness from the lab's shared CPU), through `runner.run_experiment`.
 - `lab/apps/boutique-hardened/`: upstream without the planted weaknesses, 3 replicas of every stateless service, a zone topology spread (`matchLabelKeys`, so one patch fits every Deployment), a `preStop` sleep and a PDB each; `lab/apps/boutique/upstream/kustomization.yaml` lets it use the vendored manifests as a base.
 - Planned: a ground truth for `boutique-hardened`; a `workflow_dispatch` eval in the backlog.
 
