@@ -67,7 +67,7 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | [0030](#adr-0030) | Node and zone failures: a drain mode and a lost mode, set by node_actions in the RoE | Accepted |
 | [0031](#adr-0031) | Pending undos are restored when the orchestrator starts | Accepted |
 | [0032](#adr-0032) | The eval compares the agent with a deterministic baseline, on a weak and a hardened application | Proposed |
-| [0033](#adr-0033) | Retrieval over past experiments, so a run builds on the ones before it: hybrid search in pgvector, as a tool of the model | Proposed |
+| [0033](#adr-0033) | Retrieval over past experiments, so a run builds on the ones before it: hybrid search in pgvector, as a tool of the model | Accepted |
 | [0034](#adr-0034) | GitHub Actions runs the cheap checks on every change: lint, unit tests, the chart on kind, and the image | Accepted |
 | [0038](#adr-0038) | The model reads what Kubernetes did through inspect_workload, a read-only observe tool passed through as it is, with event messages redacted | Accepted |
 | [0039](#adr-0039) | The orchestrator ships in the chart as a CronJob of runs, with no Kubernetes access, its inputs from a ConfigMap and its API key from the customer's Secret | Accepted |
@@ -185,7 +185,7 @@ Option 2. Concretely:
 
 ## ADR-0004: The lab: Online Boutique on kind, with planted weaknesses and a ground truth
 
-**Status:** Accepted, 2026-11-24
+**Status:** Accepted, 2026-11-24 (ground truth rewritten 2026-11-28, ADR-0032)
 **Related:** ADR-0003 (any application), ADR-0032 (eval)
 
 ### Context
@@ -221,7 +221,7 @@ To develop and evaluate the agent we need a cluster and an application where we 
 ### Consequences
 - **Gains:** a realistic application we did not write; every planted weakness is reviewable on its own; the answer key makes runs comparable.
 - **Trade-offs:** Online Boutique is heavy for a laptop with limited disk. One node per zone means a node failure and a zone failure cannot be told apart in the lab. Some behaviors (such as a ~10 s stall on the first request after idle) are real but unplanned; the stall was left out of the ground truth on purpose, as an "unknown weakness" the agent might find.
-- **Not solved:** the ground truth was written for the catalog era (checks and components) and must be rewritten by action and impact (ADR-0032).
+- **Not solved:** W2 and W3 show only under load, which no action can raise yet, and W4 is a configuration weakness: their patches stay in the lab, but they are not in the answer key (ADR-0032).
 
 ### In the code
 - `lab/up.sh`, `lab/kind-config.yaml`: the cluster with zone labels.
@@ -1261,30 +1261,65 @@ Option 2 now; option 3 in the backlog. Undos are run through the same `call_tool
 
 ## ADR-0032: The eval compares the agent with a deterministic baseline, on a weak and a hardened application
 
-**Status:** Proposed, 2026-11-26
-**Related:** ADR-0004 (lab and ground truth), ADR-0011 (deterministic or agent), ADR-0014 (no catalog)
+**Status:** Proposed, 2026-11-26 (ground truth, measures and baseline decided 2026-11-28; the ground truth and the scoring are built)
+**Related:** ADR-0002 (chaos), ADR-0004 (lab and ground truth), ADR-0011 (deterministic or agent), ADR-0014 (no catalog), ADR-0033 (memory)
 
 ### Context
-Without the catalog there is no checklist to score coverage against. And the honest question about this project is whether the agent finds more than a script would (ADR-0011). The eval must answer it with numbers.
+Without the catalog there is no checklist to score coverage against. And the honest question about this project is whether the agent finds more than a script would (ADR-0011). The eval must answer it with numbers. Four questions: what the answer key holds, what counts as found, what is measured, and what the agent is compared with.
 
 ### Options
+
+**The comparison:**
 1. **Score findings against the ground truth only.** Says what the agent found, not whether an agent was needed.
-2. **Compare the agent with a deterministic baseline:** a matrix that runs every action on every component, scored on the same measures.
-3. **An LLM judge of the summaries.** Useful for wording, but an LLM grading an LLM is the weakest kind of evidence; it is not the main measure.
+2. **Compare the agent with a deterministic baseline:** a fixed list of experiments, scored on the same measures.
+
+**What counts as found:**
+1. **An experiment with verdict broke** that matches an entry. A fact from the judge, but it counts what the agent saw, not what it reported.
+2. **An experiment the agent's summary cites as confirmed** that matches an entry with verdict broke. What a customer gets.
+3. **An LLM judge of the summaries.** An LLM grading an LLM is the weakest kind of evidence.
+
+**The baseline:**
+1. **Reduced, within the agent's budget:** one pod deleted per workload, one zone lost per zone.
+2. **Full:** also every workload scaled to 0 and every zone drained, about twice as long.
 
 ### Decision
-Option 2, with:
-- **A ground truth rewritten by action and impact** ("deleting a pod of checkoutservice breaks checkout for about 22 s"), not by check and component. W3 at 200m; the stall after idle stays out on purpose.
-- **Measures:** findings (confirmed against the ground truth, and unknown ones), number of experiments, total disruption time, and RoE violations (must be zero).
-- **A control group, `boutique-hardened`:** a Kustomize overlay with 3 replicas, PDBs, topology spread, preStop hooks and tuned probes. Expected: mostly withstood. Every `broke` there is an unknown weakness, or a false positive to investigate.
-- **podinfo** as a second, simple target. The OpenTelemetry demo with flagd only as a stretch (heavy for the lab's disk).
+Compare with a baseline (option 2); found is what the summary cites (option 2); the reduced baseline (option 1).
+
+**The ground truth (`lab/apps/boutique/ground_truth.yaml`), by action and impact:**
+- **One entry per action and workload,** so recall counts workloads, as the baseline does: the action (`type`, `kind`, `name`, or `zone`), and for a patch `sets`, the dotted paths it must set (`spec.replicas: 0`, list indices ignored, `"*"` for any value and any path under it); a field left out matches any value, and a zone also matches a node of that zone. The impact: the expected verdict on at least one of the entry's journeys. `verified: false` entries are not scored.
+- **Weaknesses:** W1 (zone-a lost); N1 (deleting the only pod of checkoutservice, paymentservice, shippingservice); N6 (a dependency scaled to 0: cartservice, currencyservice, productcatalogservice, shippingservice, checkoutservice), with the slow failure of about 20 s in the same entries, since the same experiments show it; N10, a CPU starvation of frontend the agent found in run 34, until it is verified by hand; N11 (added 2026-11-28), a rollout of productcatalogservice that stalls every journey for about 20 s about half the time, because frontend's gRPC connection is pinned to one of its two pods: found by the agent in runs 32 to 34 and verified without the model in runs 35 and 36, a weakness no manifest shows. A weakness that shows only some of the time needs more than one experiment to confirm, by the agent and by the eval.
+- **Expected survivals:** S1 to S3 (adservice, recommendationservice, emailservice scaled to 0) and S4 (their only pod deleted). A broke on one of them, or one cited as a weakness, is a false positive.
+- **Left out:** configuration findings (PDB, NetworkPolicy, image tag, Redis auth), which are not chaos (ADR-0002); what needs redis-cart down, since it is protected; W4, a configuration weakness whose canary is covered by the unit tests of `inspect_workload`; W2 and W3, which show only under load, while `new_users_per_second` is fixed by `target.yaml` and no action raises it. They come back as entries with Chaos Mesh (StressChaos on the pods).
+
+**Found:** the agent's summary cites, under confirmed weaknesses or known from earlier runs, a step whose experiment matches an entry with verdict broke. The baseline has no summary, so the agent and the baseline are compared on broke experiments; the gap between the two measures, for the agent, is what broke and was not reported.
+
+**Measures, per run:**
+- **Quality:** recall, findings matching no entry (unknown, reviewed by hand), false positives on expected survivals.
+- **Efficiency:** experiments, model rounds, tokens and cost, duration, seconds broken.
+- **Safety:** denied calls to real tools (the `read_tools_missing` step is a warning, not a call), and undos left pending, which must be zero.
+- **Memory:** experiments on what an earlier run already found, against new ones.
+
+**The baseline (`eval/baseline.py`):** no model, through the same runner and judge: `delete_pod` on every workload that is not protected (10) and a `lost` node failure on each zone (3), 13 experiments within `max_experiments: 15`.
+
+**Configurations:** Haiku without memory (runs 30, 31), Haiku with memory (32 to 34), Sonnet with memory, the baseline, and the same agent and baseline on `boutique-hardened`. One run per configuration is weak evidence, and the report says so.
+
+**A control group, `boutique-hardened`:** a Kustomize overlay with 3 replicas, PDBs, topology spread, preStop hooks and tuned probes. Expected: mostly withstood. Every broke there is an unknown weakness, or a false positive to investigate. It runs last.
+
+**Other targets:** podinfo as a second, simple target; the OpenTelemetry demo with flagd only as a stretch (heavy for the lab's disk).
+
+**Scoring (`eval/score.py`):** deterministic, reads `steps` and the ground truth, writes a markdown table per run, with unit tests on their own fixtures. It needs no cluster and no model, so runs already in the database are scored without running them again.
 
 ### Consequences
-- **Gains:** a direct answer to "does the agent justify itself"; regressions in the prompt or the judge show up as numbers.
-- **Trade-offs:** a full eval is several runs of 20 minutes each on a laptop, and costs tokens; it cannot run on every commit (CI runs the cheap parts, ADR-0034). Runs vary, so one run per configuration is weak evidence.
+- **Gains:** a direct answer to "does the agent justify itself"; regressions in the prompt or the judge show up as numbers; past runs are scored for free.
+- **Trade-offs:** weaknesses that need load are not scored, so recall says nothing about them. Matching a patch by the paths it sets depends on the shape of a strategic merge patch. Scoring by citations depends on the summary citing steps, as the prompt asks (ADR-0027). A full eval is several runs of 20 to 30 minutes on a laptop and costs tokens; it cannot run on every commit (CI runs the cheap parts, ADR-0034).
 
 ### In the code
-- Not built yet. Today: `lab/apps/boutique/ground_truth.yaml` (catalog-era format), `orchestrator/tests/try_agent.py` (one run with its tables).
+- `lab/apps/boutique/ground_truth.yaml`: the answer key.
+- `eval/score.py`: `action_matches`, `impact`, `cited_steps`, `score_run`, `score_all` (what earlier runs broke, for the memory measure), `render`, `PRICES`; `WARNING_STEPS` (steps that are not calls).
+- `eval/tests/unit/test_score.py`, with its own ground truth in `fixtures/`; run in CI with the orchestrator's tests.
+- `eval/baseline.py`: the `baseline` plan (`baseline_plan`, from the observe server's workloads and zones) and the `verify` plan (`verify_plan`, the patterns of earlier runs, each twice), through `runner.run_experiment`.
+- `lab/apps/boutique-hardened/`: upstream without the planted weaknesses, 3 replicas of every stateless service, a zone topology spread (`matchLabelKeys`, so one patch fits every Deployment), a `preStop` sleep and a PDB each; `lab/apps/boutique/upstream/kustomization.yaml` lets it use the vendored manifests as a base.
+- Planned: a ground truth for `boutique-hardened`; a `workflow_dispatch` eval in the backlog.
 
 
 ---
@@ -1293,7 +1328,7 @@ Option 2, with:
 
 ## ADR-0033: Retrieval over past experiments, so a run builds on the ones before it: hybrid search in pgvector, as a tool of the model
 
-**Status:** Proposed, 2026-11-26 (store, embeddings and retrieval decided 2026-11-27; being built)
+**Status:** Accepted, 2026-11-28 (proposed 2026-11-26; store, embeddings and retrieval decided 2026-11-27)
 **Related:** ADR-0006 (Postgres), ADR-0010 (the model's tools), ADR-0027 (prompt), ADR-0029 (env values)
 
 ### Context
@@ -1337,7 +1372,7 @@ What AI tools around chaos engineering do today: Harness derives an application 
 - **Not solved:** connectors to wikis and incident tools; reranking; learning from a person's corrections.
 
 ### In the code
-- Planned: `charts/chaos-agent` (Postgres image), `orchestrator/storage/schema.sql` (`knowledge_chunks`), `orchestrator/agent/knowledge.py` (chunks, embeddings, search), `orchestrator/agent/loop.py` (the tool, the prompt, indexing at the end of a run).
+- `charts/chaos-agent` (Postgres image), `orchestrator/storage/schema.sql` (`knowledge_chunks`), `orchestrator/agent/knowledge.py` (chunks, embeddings, search), `orchestrator/agent/loop.py` (the tool, the prompt, indexing at the end of a run).
 
 
 ---
@@ -1429,7 +1464,7 @@ Option 3.
 
 ## ADR-0036: One bad second before the action is noise, as it is after it
 
-**Status:** Accepted, 2026-11-27
+**Status:** Accepted, 2026-11-27 (changed 2026-11-28: the judge compares with the application's own noise, learned during the run)
 **Changes:** the inconclusive rule of ADR-0023
 **Related:** ADR-0023 (the judge), ADR-0025 (steady check)
 
@@ -1445,12 +1480,19 @@ In run 30, 3 of 13 experiments were inconclusive (steps 44, 93, 100). In every o
 ### Decision
 Option 4. The steady check (`wait_for_steady`) stays strict on purpose: when it fails it waits and tries again, which costs time, not an experiment, and it is the gate that gives the system time to recover from the last experiment.
 
+**Changed 2026-11-28, after the eval:** bad seconds were counted one by one against a fixed number, so single slow seconds scattered through a measurement added up to broke. In run 31 step 60 (one pod of cartservice deleted) the timeline was `..s.|.s......s...s.......s..s.......` with no failed request, and it was judged broke; the same experiment alone, in run 35, withstood twice. A fixed number in the code was the problem itself: every application has its own noise, and nobody on an application team knows how to tune a threshold for it, so it cannot be a setting of `target.yaml` either. The judge now learns the noise of the application during the run:
+- **Noise:** the share of bad seconds, and apart from it of failed seconds, in the seconds before the action of every experiment of the run that was not inconclusive, per journey (`noise_seconds`, `add_noise`, kept in the runner's state). A run starts from a prior of 1% (`PRIOR_BAD_SHARE`), worth 50 seconds (`PRIOR_SECONDS`), which the run's own seconds outweigh within a few experiments. Failed seconds are learned apart, as the steady state keeps success and latency apart: a system that is often slow is not often failing.
+- **Degraded** (`degraded`, `degraded_against`): a phase is degraded when noise at that rate would make it with a chance under `ALPHA` (0.5%), by any of three tests: too many bad seconds in a row (an outage), too many in any 10 seconds (a burst of flickering), or too many in the whole phase (a thin degradation that lasts, which a long phase must not dilute). The limits come from the binomial distribution (`thresholds`, `binomial_tail`), never fewer than `MIN_BROKEN_S`, so a single bad second is never a finding. The same rule decides inconclusive before the action, against the earlier experiments' noise, and broke after it, with this experiment's seconds before the action added.
+- **Each journey's result** carries `noise_rate`, the share of bad seconds the judge expected, so the model reads what the verdict was measured against.
+
 ### Consequences
 - **Gains:** in run 31, after the change, no experiment was inconclusive (14 calls, 13 verdicts).
-- **Trade-offs:** a system that flickers with an isolated bad second passes as steady before the action, as it would pass as unbroken after it. A system that is really unsteady is caught by the strict steady check, and by the stricter check against the system's own normal that is still to be designed.
+- **Trade-offs:** a system that flickers with an isolated bad second passes as steady before the action, as it would pass as unbroken after it. Since 2026-11-28, the judge's sensitivity follows the data it has: in the first experiment of a run, against the prior alone, two failed seconds in a 95 second phase are not a finding; after about 40 clean seconds before earlier actions, they are. A noisy application gets a less sensitive judge, which is the point: what noise explains is not a weakness. A system noisy because of something outside the application (a loaded laptop) is judged as noisy for the whole run. A system that is really unsteady is caught by the strict steady check, and by the stricter check against the system's own normal that is still to be designed.
 
 ### In the code
-- `orchestrator/experiments/judge.py`: the inconclusive condition in `judge`.
+- `orchestrator/experiments/judge.py`: `PRIOR_BAD_SHARE`, `PRIOR_SECONDS`, `ALPHA`, `WINDOW_S`, `noise_rate`, `binomial_tail`, `thresholds`, `degraded`, `degraded_against`, `counts_of`, `noise_seconds`, `add_noise`, and `judge(..., noise)`; `longest_broken_s` and `noise_rate` in each journey's result.
+- `orchestrator/experiments/runner.py`: the run's noise in `state["noise"]`, passed to the judge and grown after every experiment that was not inconclusive.
+- `eval/score.py`: `experiments_of` and `broken_journeys` judge every stored experiment again from its timeline, rebuilding the run's noise from the timelines of its earlier experiments, so earlier runs are scored by the current rule.
 - `orchestrator/tests/unit/test_judge.py`: one bad second before the action, two bad seconds, a bad second in the baseline and one before the action adding up, and a bad second before the action not counted in `broken_s`.
 
 

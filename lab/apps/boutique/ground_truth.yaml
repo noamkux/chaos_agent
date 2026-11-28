@@ -1,191 +1,233 @@
-# Answer key for the Online Boutique eval. The agent must never see this file.
-# Matching: a finding matches an entry when check and component are equal and, for entries
-# with dependencies, the finding's dependency is in the list. An entry counts as found when
-# at least one listed component is reported. Entries with verified: false are skipped.
-# components: ["*"] means every workload that discovery found in the run.
+# Answer key for the Online Boutique eval (ADR-0032). The agent must never see this file.
+#
+# Matching an experiment to an entry:
+# - action: every field given must equal the experiment's action; a field left out matches any value.
+#   A zone also matches a node_failure on a single node of that zone.
+# - sets: for a patch, dotted paths the patch must set, list indices ignored
+#   (spec.template.spec.containers.resources.limits.cpu); "*" matches any value, and any path under it
+#   (spec.template.metadata.annotations: "*" is any annotation, the usual way to start a rollout).
+# - impact: the verdict the entry expects, on at least one of its journeys that the experiment measured.
+#
+# A weakness is found when the agent's summary cites, as confirmed or known from an earlier run,
+# an experiment that matches it with verdict broke. An expected survival cited as a weakness, or an
+# experiment on one that broke, is a false positive. Entries with verified: false are not scored.
 
 app: online-boutique
 version: v0.10.4
 namespace: boutique
 
 weaknesses:
-  # Natural: present in the upstream manifests
-  - id: N1
-    check: single-replica
-    area: resilience
-    components: [checkoutservice, paymentservice, shippingservice, redis-cart]
-    severity: medium
-    level: disrupt
-    origin: natural
-    verified: true
-    proof: kill the only pod, the service is unavailable until the replacement is Ready
-
-  - id: N2
-    check: missing-pdb
-    area: resilience
-    components: ["*"]
-    severity: low
-    level: observe
-    origin: natural
-    verified: true
-    proof: no PodDisruptionBudget in the namespace; drain evicts all replicas with no limit
-
-  - id: N3
-    check: open-network-access
-    area: exposure
-    components:
-      [
-        adservice,
-        cartservice,
-        checkoutservice,
-        currencyservice,
-        emailservice,
-        paymentservice,
-        productcatalogservice,
-        recommendationservice,
-        redis-cart,
-        shippingservice,
-      ]
-    severity: high
-    level: probe
-    origin: natural
-    verified: true
-    proof: no NetworkPolicy in the namespace; a TCP connection from another namespace reaches every internal Service
-
-  - id: N9
-    check: unauthenticated-access
-    area: exposure
-    components: [redis-cart]
-    severity: high
-    level: probe
-    origin: natural
-    verified: false
-    proof: a PING from another namespace to redis-cart.boutique:6379 returns PONG (no password)
-
-  - id: N4
-    check: ephemeral-state
-    area: resilience
-    components: [redis-cart]
-    severity: high
-    level: observe
-    origin: natural
-    verified: true
-    proof: Redis stores all carts on an emptyDir volume; a pod restart deletes every cart. Never prove by disruption.
-
-  - id: N5
-    check: unpinned-image
-    area: exposure
-    components: [redis-cart]
-    severity: low
-    level: observe
-    origin: natural
-    verified: true
-    proof: image redis:alpine is a floating tag
-
-  - id: N6
-    check: non-graceful-degradation
-    area: resilience
-    components: [frontend]
-    dependencies: [currencyservice, shippingservice, cartservice, redis-cart]
-    severity: high
-    level: disrupt
-    origin: natural
-    verified: true
-    proof: scale the dependency to 0; currency breaks home/product/cart, shipping breaks cart, cart or redis breaks every page
-
-  - id: N7
-    check: slow-failure
-    area: resilience
-    components: [frontend]
-    dependencies:
-      [
-        cartservice,
-        currencyservice,
-        productcatalogservice,
-        checkoutservice,
-        shippingservice,
-      ]
-    severity: high
-    level: disrupt
-    origin: natural
-    verified: true
-    proof: after the dependency's pods disappear, requests block for about 20s before failing; later requests fail in ms
-
-  - id: N8
-    check: slow-failure
-    area: resilience
-    components: [cartservice]
-    dependencies: [redis-cart]
-    severity: medium
-    level: disrupt
-    origin: natural
-    verified: true
-    proof: with redis-cart down, every cart-related request takes about 6s before returning 500
-
   # Planted: lab/apps/boutique/patches/
   - id: W1
-    check: single-zone
-    area: resilience
-    components: [frontend]
-    severity: high
-    level: disrupt
-    origin: patches/frontend-single-zone.yaml
+    origin: planted
     verified: true
-    proof: drain zone-a, both frontend pods stay Pending (node affinity), 100% errors until uncordon
+    action:
+      type: node_failure
+      zone: zone-a
+    impact:
+      verdict: broke
+      journeys: [home, product, cart, checkout]
+    proof: frontend has a required nodeAffinity to zone-a; losing zone-a leaves both pods Pending, every journey fails until the restore
 
-  - id: W2
-    check: aggressive-liveness
-    area: resilience
-    components: [currencyservice]
-    severity: medium
-    level: disrupt
-    origin: patches/currencyservice-aggressive-liveness.yaml
-    verified: false
-    proof: under load, liveness probe timeouts restart the container (restart count rises)
-
-  - id: W3
-    check: cpu-throttling
-    area: performance
-    components: [productcatalogservice]
-    severity: medium
-    level: disrupt
-    origin: patches/productcatalogservice-cpu-throttling.yaml
-    verified: false
-    proof: under load, p95 latency rises together with container_cpu_cfs_throttled_periods_total
-
-  - id: W4
-    check: secret-in-env
-    area: exposure
-    components: [checkoutservice]
-    severity: high
-    level: observe
-    origin: patches/checkoutservice-secret-in-env.yaml
+  # Natural: in the upstream manifests.
+  # A single replica: deleting the only pod takes the service down until its replacement is Ready.
+  - id: N1-checkoutservice
+    origin: natural
     verified: true
-    canary: lab-fake-7f3c9a2e5b8d41f6
-    proof: PAYMENT_GATEWAY_API_KEY is a literal env value, not a secretKeyRef
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: checkoutservice
+    impact:
+      verdict: broke
+      journeys: [checkout]
+    proof: one replica; checkout fails until the new pod is Ready
+
+  - id: N1-paymentservice
+    origin: natural
+    verified: true
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: paymentservice
+    impact:
+      verdict: broke
+      journeys: [checkout]
+    proof: one replica; checkout fails until the new pod is Ready
+
+  - id: N1-shippingservice
+    origin: natural
+    verified: true
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: shippingservice
+    impact:
+      verdict: broke
+      journeys: [cart, checkout]
+    proof: one replica; the cart page shows a shipping quote, so cart and checkout fail until the new pod is Ready
+
+  # A dependency down for every caller (scaled to 0): frontend has no fallback, and requests block
+  # for about 20 s before they fail, instead of failing fast (dependency-check.sh).
+  - id: N6-cartservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: cartservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [home, product, cart, checkout]
+    proof: every page reads the cart, so every journey fails, after about 20 s each
+
+  - id: N6-currencyservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: currencyservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [home, product, cart]
+    proof: every price is converted, so home, product and cart fail, after about 20 s each, instead of showing the default currency
+
+  - id: N6-productcatalogservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: productcatalogservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [home, product]
+    proof: home lists the products and product reads one, so both fail, after about 20 s each
+
+  - id: N6-shippingservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: shippingservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [cart]
+    proof: the cart page fails on its shipping quote, after about 20 s, instead of rendering without it
+
+  - id: N6-checkoutservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: checkoutservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [checkout]
+    proof: placing an order blocks for about 20 s before it fails
+
+  # Found by the agent (runs 32, 33, 34 cited it), then verified without the model (runs 35, 36).
+  # frontend's gRPC connection to productcatalogservice is one long HTTP/2 connection, balanced by
+  # kube-proxy only when it opens, so every request goes to one of the two pods. When a rollout removes
+  # that pod, the connection stalls until frontend gives up (the slow failure of N6). It breaks about
+  # half the time: only when the pod frontend is connected to is the one replaced.
+  - id: N11
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: productcatalogservice
+      sets: {spec.template.metadata.annotations: "*"}
+    impact:
+      verdict: broke
+      journeys: [home, product, cart, checkout]
+    proof: run 36 step 1, a rollout and its restore under every journey; after the restore every journey failed for about 23 s (http 500 and timeouts); the same experiment withstood in run 36 step 7
+
+  # Found by the agent in run 34 (Haiku), not in any earlier audit.
+  - id: N10
+    origin: natural
+    verified: false
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: frontend
+      sets: {spec.template.spec.containers.resources.limits.cpu: "*"}
+    impact:
+      verdict: broke
+      journeys: [home, product, cart, checkout]
+    proof: "to verify by hand: a tighter CPU limit on frontend starves it, its probes time out and the pods restart"
 
 expected_survivals:
+  # Optional dependencies: frontend renders the page without them.
   - id: S1
-    check: non-graceful-degradation
-    components: [frontend]
-    dependencies: [adservice]
-    proof: adservice down, all pages 200 without ads
-  - id: S2
-    check: non-graceful-degradation
-    components: [frontend]
-    dependencies: [recommendationservice]
-    proof: recommendationservice down, product page 200 without recommendations
-  - id: S3
-    check: non-graceful-degradation
-    components: [frontend]
-    dependencies: [emailservice]
-    proof: emailservice down, checkout still succeeds
-  - id: S4
-    check: single-replica
-    components: [adservice, recommendationservice, emailservice]
-    proof: the only pod is killed; every journey keeps working, the page renders without that part
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: adservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: withstood
+      journeys: [home, product]
+    proof: every page returns 200 without ads
 
-unscored:
-  - check: missing-topology-spread
-    components: [cartservice, productcatalogservice, currencyservice, frontend]
-    reason: replicas are spread today by scheduler scoring only; no reliable experiment proves it
+  - id: S2
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: recommendationservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: withstood
+      journeys: [product]
+    proof: the product page returns 200 without recommendations
+
+  - id: S3
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: emailservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: withstood
+      journeys: [checkout]
+    proof: the order is placed; only the confirmation email is lost
+
+  # A single replica of an optional dependency: deleting its only pod is not felt.
+  - id: S4-adservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: adservice
+    impact:
+      verdict: withstood
+      journeys: [home, product]
+    proof: the page renders without ads while the new pod starts
+
+  - id: S4-recommendationservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: recommendationservice
+    impact:
+      verdict: withstood
+      journeys: [product]
+    proof: the product page renders without recommendations while the new pod starts
+
+  - id: S4-emailservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: emailservice
+    impact:
+      verdict: withstood
+      journeys: [checkout]
+    proof: the order is placed while the new pod starts

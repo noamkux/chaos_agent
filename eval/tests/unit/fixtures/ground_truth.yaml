@@ -1,0 +1,34 @@
+# The tests' own answer key: never the lab's.
+app: test-app
+namespace: shop
+
+weaknesses:
+  - id: W1
+    origin: planted
+    verified: true
+    action: {type: node_failure, zone: zone-a}
+    impact: {verdict: broke, journeys: [home, cart]}
+  - id: N1
+    origin: natural
+    verified: true
+    action: {type: delete_pod, kind: apps/Deployment, name: api}
+    impact: {verdict: broke, journeys: [cart]}
+  - id: N6
+    origin: natural
+    verified: true
+    action: {type: patch, kind: apps/Deployment, name: db-proxy, sets: {spec.replicas: 0}}
+    impact: {verdict: broke, journeys: [home]}
+  - id: N10
+    origin: natural
+    verified: false
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: web
+      sets: {spec.template.spec.containers.resources.limits.cpu: "*"}
+    impact: {verdict: broke, journeys: [home]}
+
+expected_survivals:
+  - id: S1
+    action: {type: patch, kind: apps/Deployment, name: ads, sets: {spec.replicas: 0}}
+    impact: {verdict: withstood, journeys: [home]}
