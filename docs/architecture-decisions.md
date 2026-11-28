@@ -1308,7 +1308,7 @@ What AI tools around chaos engineering do today: Harness derives an application 
 ### Decision
 - **What:** option 2 now; option 3 later (`kind = doc` in the same table). The dependency graph of an application is not retrieved: it is discovery, and comes from the environment the services are configured with (`calls`, a follow-up in observe).
 - **Store:** pgvector. The Postgres image becomes `pgvector/pgvector` on Postgres 17.
-- **Embeddings:** fastembed (`BAAI/bge-small-en-v1.5`, 384 dimensions, ONNX on CPU) in the orchestrator, so no text of the customer leaves the cluster to be embedded.
+- **Embeddings:** fastembed (`BAAI/bge-small-en-v1.5`, 384 dimensions, ONNX on CPU) in the orchestrator, so no text of the customer leaves the cluster to be embedded. The orchestrator runs on Python 3.14 for it: onnxruntime has no 3.15 wheel yet, while the MCP servers stay on 3.15 (ADR-0037).
 - **Search:** hybrid, in one query: `WHERE namespace = <the run's namespace>` (always, set by the orchestrator, never by the model) and optionally the workload, then `ORDER BY embedding <=> query LIMIT 5`.
 - **Retrieval:** a second tool of the model, `search_knowledge(query, workload)`, run by the orchestrator and recorded as a step like every other call. The prompt tells the model to search before planning an experiment on a workload.
 - **What is written,** at the end of every run, by the orchestrator:
@@ -1350,12 +1350,12 @@ Every change to the agent can break it in ways that only show up in a 20-minute 
 ### Decision
 Option 2 for what runs, and option 3 for the chart. One workflow, `ci`, on every push to `main` and every pull request, with `permissions: contents: read`, every action pinned to a commit SHA, `persist-credentials: false`, a timeout per job, and one run per ref at a time:
 - **`lint`:** ruff (`--select F`) on `orchestrator/` and `servers/mcp/`.
-- **`test`:** the unit tests (pytest) on Python 3.15, the version of the image; the servers' dependencies installed with `--require-hashes`. The tests use their own fixtures, never the lab's files.
+- **`test-servers` and `test-orchestrator`:** the unit tests (pytest), each part on the Python it runs on: the MCP servers on 3.15, the version of their image, with their dependencies installed with `--require-hashes`; the orchestrator on 3.14, since onnxruntime (under fastembed, ADR-0033) has no 3.15 wheel yet (split 2026-11-28; to be joined again when it has one). The tests use their own fixtures, never the lab's files.
 - **`chart`:** Helm 4.3.2 (the version used locally).
   - `helm lint --strict` and `kubeconform -strict` on the chart rendered with `ci/all-levels-values.yaml` (every level on, `nodeActions: whole_node`, two namespaces). kubeconform is downloaded with its checksum checked.
   - **Refusals:** the chart must fail, with the expected message, on a missing `allowedNamespaces`, a missing image tag, and an unknown `nodeActions`.
   - **On kind:** the MCP image built in the job and loaded into the cluster, `helm install --wait`, then every ValidatingAdmissionPolicy must reach `observedGeneration` 1 with no `expressionWarnings`. Cluster state is printed on failure, only if the cluster came up.
-- **`image`:** after the other three pass. Built with the Docker CLI, scanned by Trivy (pinned action and binary) that fails on fixable high and critical vulnerabilities; on `main` only, pushed to GHCR as `sha-<commit>`, its digest written to the job summary, and two attestations signed through GitHub's OIDC (Sigstore): SLSA build provenance and an SPDX SBOM made by Trivy. `packages: write`, `id-token: write` and `attestations: write` are granted to this job only.
+- **`image`:** after the other jobs pass. Built with the Docker CLI, scanned by Trivy (pinned action and binary) that fails on fixable high and critical vulnerabilities; on `main` only, pushed to GHCR as `sha-<commit>`, its digest written to the job summary, and two attestations signed through GitHub's OIDC (Sigstore): SLSA build provenance and an SPDX SBOM made by Trivy. `packages: write`, `id-token: write` and `attestations: write` are granted to this job only.
 
 **Why pinning by SHA matters here:** in March 2026 most version tags of `aquasecurity/trivy-action` were force-pushed to code that stole CI secrets; a job that can push images and request OIDC tokens must not run an action by a movable tag.
 

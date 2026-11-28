@@ -2,3 +2,5 @@ psycopg[binary]==3.3.6
 mcp==2.3.0
 anthropic==2.14.0
 pyyaml==6.0.4
+fastembed==0.9.1
+pgvector==0.5.1

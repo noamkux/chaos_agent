@@ -48,3 +48,26 @@ CREATE TABLE IF NOT EXISTS undo_actions (
     created_at   timestamptz  NOT NULL DEFAULT now(),
     done_at      timestamptz
 );
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id            bigint       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    namespace     text         NOT NULL,
+    kind          text         NOT NULL CHECK (kind IN ('experiment', 'summary', 'doc')),
+    run_id        bigint       REFERENCES runs (id),
+    step          int,
+    workloads     text[]       NOT NULL DEFAULT '{}',
+    action_type   text,
+    verdict       text,
+    content       text         NOT NULL,
+    content_hash  text         NOT NULL,
+    embedding     vector(384)  NOT NULL,
+    created_at    timestamptz  NOT NULL DEFAULT now(),
+    UNIQUE (namespace, content_hash)
+);
+
+CREATE INDEX IF NOT EXISTS knowledge_chunks_workloads
+    ON knowledge_chunks USING gin (workloads);
+CREATE INDEX IF NOT EXISTS knowledge_chunks_embedding
+    ON knowledge_chunks USING hnsw (embedding vector_cosine_ops);

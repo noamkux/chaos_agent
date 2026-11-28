@@ -1,5 +1,10 @@
-"""The chunks the agent remembers: one per judged experiment, one per section of a summary."""
+"""The chunks the agent remembers: one per judged experiment, one per section of a summary, and the
+search_knowledge tool the model reads them with."""
+import asyncio
+import json
 from datetime import datetime, timezone
+
+import pytest
 
 import knowledge
 
@@ -71,3 +76,48 @@ def test_the_same_run_gives_the_same_hashes():
     first = knowledge.experiment_chunks(31, "boutique", steps)
     again = knowledge.experiment_chunks(31, "boutique", steps)
     assert [c["content_hash"] for c in first] == [c["content_hash"] for c in again]
+
+
+class Recorder:
+    """db.start_step and db.finish_step without Postgres: keeps what was recorded."""
+
+    def __init__(self):
+        self.started, self.finished = [], []
+
+    def start_step(self, conn, run_id, name, args, allowed):
+        self.started.append((name, args, allowed))
+        return 1, 7
+
+    def finish_step(self, conn, step_id, output):
+        self.finished.append(output)
+
+
+@pytest.fixture
+def recorder(monkeypatch):
+    recorder = Recorder()
+    monkeypatch.setattr(knowledge.db, "start_step", recorder.start_step)
+    monkeypatch.setattr(knowledge.db, "finish_step", recorder.finish_step)
+    return recorder
+
+
+WORKLOADS = ["apps/Deployment/frontend"]
+
+
+@pytest.mark.parametrize("args, error", [
+    ({"query": "  "}, "query must be a sentence"),
+    ({"query": "zone loss", "workload": "frontend"}, "unknown workload"),
+])
+def test_a_bad_search_is_refused_and_recorded(recorder, args, error):
+    output = json.loads(asyncio.run(knowledge.search_knowledge(None, 1, "boutique", WORKLOADS, args)))
+    assert error in output["error"] and output["step"] == 7
+    assert recorder.started[0][2] is False
+
+
+def test_a_search_uses_the_runs_namespace_and_is_recorded(recorder, monkeypatch):
+    calls = []
+    monkeypatch.setattr(knowledge, "search", lambda conn, namespace, query, workload: calls.append(
+        (namespace, query, workload)) or [{"run_id": 31, "step": 97, "kind": "experiment", "content": "x", "distance": 0.27}])
+    args = {"query": "zone loss", "workload": "apps/Deployment/frontend", "namespace": "kube-system"}
+    output = json.loads(asyncio.run(knowledge.search_knowledge(None, 1, "boutique", WORKLOADS, args)))
+    assert calls == [("boutique", "zone loss", "apps/Deployment/frontend")]
+    assert output["results"][0]["step"] == 97 and recorder.finished[0]["results"] == output["results"]

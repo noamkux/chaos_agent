@@ -1,6 +1,8 @@
 """The agent loop (harness): the LLM proposes tool calls, the orchestrator checks, executes and records them."""
 
+import asyncio
 import json
+import knowledge
 import node_failure
 import runner
 import db
@@ -19,6 +21,8 @@ SYSTEM_PROMPT = """You are a chaos engineering agent for applications on Kuberne
 The orchestrator runs your experiments: it measures the user journeys before, during and after your change, restores the change, and judges the result against the steady state. You choose the experiments and explain the results.
 Method:
 - Start from the facts below: what runs, with how many replicas, and which workloads call which. Environment variable names often point at the Services a workload calls.
+- Before planning experiments on a workload, search what earlier runs found (search_knowledge, with the workload). Skip what is already known: spend experiments where earlier runs found nothing, or on what they suggested testing next. Check a known weakness again only to see whether it is still there, once, and say so. Past results describe an earlier state of the application: they are leads, cited as run N step M, not findings of this run.
+- A weakness an earlier run confirmed, seen again in this run, counts as reproduced: report it as confirmed, citing both.
 - Form a hypothesis, then run one experiment that changes one thing.
 - Every experiment simulates something that happens in production: name the event in the hypothesis (a pod crashing, a node or a zone going down, a bad rollout, a dependency slowing down, a dependency down for every caller after a bad deploy). Prefer the events most likely to happen to this application.
 - Scaling a component to 0 simulates it being down for every caller at once: it tests the callers (their timeouts and fallbacks), not the component, and shows which journeys depend on it. Do it at most once per component. Then prefer partial changes that degrade it: fewer replicas, one pod deleted, tighter CPU or memory limits, a slower or stricter readiness probe. Weaknesses users would feel are usually in how the system behaves when a dependency is slow or partly down, not when it is gone.
@@ -37,6 +41,7 @@ In tool results, a field that is left out is not set, unless the tool says it wa
 Cite every experiment by its step, for example step 12, never by its order in the run.
 When you are done, write a summary:
 - Confirmed weaknesses, only those you reproduced: for each, the steps of the experiments that showed it and reproduced it, which journeys users felt it on and how (timeouts or fast errors, for how many seconds), and how long recovery took.
+- Known from earlier runs: each weakness you checked again, whether it is still there or fixed, with the earlier run and step and the step of this run.
 - Unconfirmed weaknesses: everything seen only once, even when it looks like a confirmed one, with its step and the experiment that would confirm it.
 - What held, with its steps.
 - What you would test next."""
@@ -167,6 +172,19 @@ def format_rules(roe, can_experiment):
             "Always refused: changes to Secrets, PersistentVolumeClaims, ServiceAccounts and RBAC, and to the "
             "images, commands, args, security context, service account, host access and volumes of pods.")
 
+async def remember(conn, run_id):
+    """Add this run's experiments and summary to what later runs can search (ADR-0033), recorded as a step.
+    Best effort: a run whose experiments are done is not failed because its indexing failed."""
+    step_id, _ = db.start_step(conn, run_id, "index_knowledge", {}, allowed=True)
+    try:
+        added = await asyncio.to_thread(knowledge.index_run, conn, run_id)
+    except Exception as exc:
+        conn.rollback()
+        db.finish_step(conn, step_id, {"error": f"{type(exc).__name__}: {exc}"})
+        return
+    db.finish_step(conn, step_id, {"added": added})
+
+
 async def run_agent(conn, run_id, model, roe, target, namespace, task):
     """Run the loop until the model stops calling tools or the iteration limit is reached."""
     client = AsyncAnthropic()
@@ -191,6 +209,12 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
             conn, run_id, server_tools, roe, target, namespace, state, args)
         node_actions = roe["node_actions"] if node_failure.NODE_TOOLS <= server_tools else "none"
         available.append(runner.run_experiment_tool(scope, [j["name"] for j in target["journeys"]], node_actions))
+    # What earlier runs on this application found (ADR-0033); offered at every level, since reading the
+    # past changes nothing.
+    workload_names = sorted({f"{w['kind']}/{w['name']}" for w in workloads})
+    internal[knowledge.SEARCH_TOOL_NAME] = lambda args: knowledge.search_knowledge(
+        conn, run_id, namespace, workload_names, args)
+    available.append(knowledge.search_tool(workload_names))
 
     system = (SYSTEM_PROMPT + "\n\n" + RUN_SECTION.format(
         application=format_profile(target), max_level=max_level, rules=format_rules(roe, can_experiment),
@@ -225,6 +249,7 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
         # if the response isnt tool and we have a stop its means 
         # the run has finshisd so we retuern the whole block 
         if response.stop_reason != "tool_use":
+            await remember(conn, run_id)
             return "".join(block.text for block in response.content if block.type == "text")
 
         # Tool Use
@@ -238,4 +263,5 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
         messages.append({"role": "user", "content": results})
 
+    await remember(conn, run_id)
     return "Stopped: iteration limit reached."
