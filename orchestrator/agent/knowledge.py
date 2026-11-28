@@ -19,7 +19,7 @@ import hashlib
 import json
 import re
 
-import db
+from storage import db
 
 SEARCH_TOOL_NAME = "search_knowledge"
 MODEL_NAME = "BAAI/bge-small-en-v1.5"

@@ -69,7 +69,8 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | [0032](#adr-0032) | The eval compares the agent with a deterministic baseline, on a weak and a hardened application | Proposed |
 | [0033](#adr-0033) | Retrieval over past experiments, so a run builds on the ones before it: hybrid search in pgvector, as a tool of the model | Proposed |
 | [0034](#adr-0034) | GitHub Actions runs the cheap checks on every change: lint, unit tests, the chart on kind, and the image | Accepted |
-| [0038](#adr-0038) | The model reads what Kubernetes did through inspect_workload, a read-only observe tool passed through as it is, with event messages redacted | Proposed |
+| [0038](#adr-0038) | The model reads what Kubernetes did through inspect_workload, a read-only observe tool passed through as it is, with event messages redacted | Accepted |
+| [0039](#adr-0039) | The orchestrator ships in the chart as a CronJob of runs, with no Kubernetes access, its inputs from a ConfigMap and its API key from the customer's Secret | Accepted |
 
 
 ---
@@ -136,8 +137,8 @@ Option 2. The core loop is: hypothesis, one change, measure what users see, judg
 - **Not solved:** whether the agent actually finds more than a deterministic sweep of the same actions. That is what the eval must show (ADR-0032).
 
 ### In the code
-- `orchestrator/agent.py`: `SYSTEM_PROMPT` (the chaos engineering method) and `run_agent`.
-- `orchestrator/runner.py`: `run_experiment`, the only tool the model has.
+- `orchestrator/agent/loop.py`: `SYSTEM_PROMPT` (the chaos engineering method) and `run_agent`.
+- `orchestrator/experiments/runner.py`: `run_experiment`, the only tool the model has.
 - Commit `393037e`: the removal of the catalog and of report_finding.
 
 
@@ -172,7 +173,7 @@ Option 2. Concretely:
 - **Not solved:** cluster-specific failures that the Kubernetes API cannot simulate (a node that dies without warning, a cloud zone outage): they need cloud tools such as AWS FIS, and are in the backlog.
 
 ### In the code
-- `orchestrator/run_config.py`: `load_target` and `load_roe`, the only way the application and the rules enter a run.
+- `orchestrator/config.py`: `load_target` and `load_roe`, the only way the application and the rules enter a run.
 - `servers/mcp/k8s.py`: `namespaced_kinds` and `listable_kinds` (every kind the API server lists).
 - `servers/mcp/probe.py`: `service_url` (`.svc` addressing).
 - `lab/apps/boutique/target.yaml` and `lab/apps/boutique/roe.yaml`: the lab's inputs, kept outside the code.
@@ -293,8 +294,8 @@ Option 3. A StatefulSet with a PVC in the chart, its password from an `existingS
 - **Not solved:** cost tracking (`spent_usd`, `budget_usd`) exists in the schema but is not enforced yet (backlog).
 
 ### In the code
-- `orchestrator/schema.sql`: the three tables and the partial unique index.
-- `orchestrator/db.py`: `create_run`, `claim_run` (catches the unique violation), `start_step`, `finish_step`, `record_llm_step`, `add_undo`, `finish_undo`.
+- `orchestrator/storage/schema.sql`: the three tables and the partial unique index.
+- `orchestrator/storage/db.py`: `create_run`, `claim_run` (catches the unique violation), `start_step`, `finish_step`, `record_llm_step`, `add_undo`, `finish_undo`.
 - `charts/chaos-agent/templates/postgresql-*.yaml`: the StatefulSet, Service and Secret.
 - `lab/watch-run.sh`: follows a run live from the database.
 
@@ -326,8 +327,8 @@ Option 2. `run_agent` calls `messages.create`, records the response and its toke
 - **Trade-offs:** features a framework gives for free (retries, streaming, conversation summarization when the context grows) must be written by us when needed. A long run grows the context with every experiment result; there is no summarization yet.
 
 ### In the code
-- `orchestrator/agent.py`: `run_agent`, `MAX_ITERATIONS`, `MAX_TOKENS`, the `cache_control` argument, the `stop_reason` checks.
-- `orchestrator/db.py`: `record_llm_step`.
+- `orchestrator/agent/loop.py`: `run_agent`, `MAX_ITERATIONS`, `MAX_TOKENS`, the `cache_control` argument, the `stop_reason` checks.
+- `orchestrator/storage/db.py`: `record_llm_step`.
 
 
 ---
@@ -377,7 +378,7 @@ The protocol itself adds a standard interface on top: a schema and a description
 - `servers/mcp/server.py`: `LEVEL`, `TOOLS_BY_LEVEL`, the registration loop.
 - `charts/chaos-agent/templates/mcp.yaml`: one ServiceAccount, Deployment and Service per enabled level.
 - `charts/chaos-agent/templates/mcp-rbac.yaml` and `_helpers.tpl` (`chaos-agent.mcp.rules`): the Role per level per namespace.
-- `orchestrator/tools.py`: `SERVERS`, one address per level.
+- `orchestrator/mcp_client.py`: `SERVERS`, one address per level.
 
 
 ---
@@ -409,9 +410,9 @@ The model can work at every level: at observe it reasons over the facts; at disr
 - **Trade-offs:** a run at observe level has little for the model to do since the catalog was removed (ADR-0014); in practice runs are at disrupt.
 
 ### In the code
-- `orchestrator/tools.py`: `ALLOWED_LEVELS`, `load_tools`.
-- `orchestrator/run_config.py`: `LEVELS` and the `max_level` check in `load_roe`.
-- `orchestrator/agent.py`: `can_experiment = runner.EXPERIMENT_TOOLS <= server_tools` in `run_agent`.
+- `orchestrator/mcp_client.py`: `ALLOWED_LEVELS`, `load_tools`.
+- `orchestrator/config.py`: `LEVELS` and the `max_level` check in `load_roe`.
+- `orchestrator/agent/loop.py`: `can_experiment = runner.EXPERIMENT_TOOLS <= server_tools` in `run_agent`.
 
 
 ---
@@ -443,9 +444,9 @@ Option 3.
 - **Trade-offs:** the model cannot ask for a fact that discovery did not collect, or run an action the runner does not know. Every new kind of action (a node failure, a Chaos Mesh fault) needs runner code, not only a new server tool.
 
 ### In the code
-- `orchestrator/agent.py`: `run_agent`, `internal`, `available`, and the `tools.call_tool(conn, run_id, set(), ...)` branch for any other name.
-- `orchestrator/runner.py`: `run_experiment_tool` (the schema the model sees), `run_experiment`, `EXPERIMENT_TOOLS`.
-- `orchestrator/tools.py`: `call_tool`, the allowed-set check.
+- `orchestrator/agent/loop.py`: `run_agent`, `internal`, `available`, and the `mcp_client.call_tool(conn, run_id, set(), ...)` branch for any other name.
+- `orchestrator/experiments/runner.py`: `run_experiment_tool` (the schema the model sees), `run_experiment`, `EXPERIMENT_TOOLS`.
+- `orchestrator/mcp_client.py`: `call_tool`, the allowed-set check.
 
 
 ---
@@ -478,9 +479,9 @@ Option 3 is not rejected: it is the eval's baseline (ADR-0032). If the agent doe
 - **Not solved:** whether disrupt justifies an LLM is an empirical question, answered by the eval, not by this record.
 
 ### In the code
-- `orchestrator/agent.py`: `discover_inventory`, `collect_workloads` (deterministic collection), `SYSTEM_PROMPT` (what the agent does).
-- `orchestrator/runner.py`: `check` and `run_experiment` (deterministic execution).
-- `orchestrator/experiment.py`: `judge` (deterministic verdict).
+- `orchestrator/agent/loop.py`: `discover_inventory`, `collect_workloads` (deterministic collection), `SYSTEM_PROMPT` (what the agent does).
+- `orchestrator/experiments/runner.py`: `check` and `run_experiment` (deterministic execution).
+- `orchestrator/experiments/judge.py`: `judge` (deterministic verdict).
 
 
 ---
@@ -529,7 +530,7 @@ And one more: should the orchestrator read the cluster directly, without an MCP 
 ### In the code
 - `servers/mcp/k8s.py`: `SKIPPED_KINDS`, `namespaced_kinds`, `listable_kinds`, `get_inventory`, `get_workloads`, `CONTAINER_FIELDS`, `POD_FIELDS`, `env_facts`.
 - `servers/mcp/k8s.py`: `get_placement`, `node_facts`, `workload_of`, `ZONE_LABEL`.
-- `orchestrator/agent.py`: `collect`, `discover_inventory`, `REQUIRED_KINDS`, `collect_workloads`, `collect_placement`, `format_placement`, and the field rules in `RUN_SECTION`.
+- `orchestrator/agent/loop.py`: `collect`, `discover_inventory`, `REQUIRED_KINDS`, `collect_workloads`, `collect_placement`, `format_placement`, and the field rules in `RUN_SECTION`.
 - `charts/chaos-agent/templates/mcp-rbac.yaml`: the observe `view` RoleBinding and the `-nodes` ClusterRole.
 
 
@@ -588,8 +589,8 @@ Option 2. The prompt teaches the method; the facts come from discovery; the expe
 - **Trade-offs:** less predictable runs; quality depends on the prompt and the model. In the first run the agent mostly scaled things to 0, which always breaks and teaches little; the prompt had to steer it toward partial changes (ADR-0027). Measuring "coverage" is harder without a list: the eval compares outcomes, not checklists (ADR-0032).
 
 ### In the code
-- `orchestrator/agent.py`: `SYSTEM_PROMPT`, the Method section.
-- `orchestrator/runner.py`: `run_experiment_tool`, the generic action schema.
+- `orchestrator/agent/loop.py`: `SYSTEM_PROMPT`, the Method section.
+- `orchestrator/experiments/runner.py`: `run_experiment_tool`, the generic action schema.
 
 
 ---
@@ -626,7 +627,7 @@ Details that make the generic tools safe:
 
 ### In the code
 - `servers/mcp/disrupt.py`: `patch_resource` (415 fallback, `resourceVersion` precondition, metadata rule), `delete_pod`.
-- `orchestrator/runner.py`: `ACTIONS`, `check`, and the `patch` and `delete_pod` branches of `run_experiment`.
+- `orchestrator/experiments/runner.py`: `ACTIONS`, `check`, and the `patch` and `delete_pod` branches of `run_experiment`.
 
 
 ---
@@ -709,8 +710,8 @@ Every patch must be undone after the experiment, even if the orchestrator crashe
 
 ### In the code
 - `servers/mcp/disrupt.py`: `SNAPSHOT_NAMESPACE`, `SNAPSHOT_LABEL`, `clean`, `snapshot_resource`, `restore_snapshot`.
-- `orchestrator/runner.py`: the patch branch of `run_experiment` (`db.add_undo` before `PATCH`, `db.finish_undo` after `RESTORE`, `RuntimeError` on a failed restore).
-- `orchestrator/db.py`: `add_undo`, `finish_undo`; `orchestrator/schema.sql`: `undo_actions`.
+- `orchestrator/experiments/runner.py`: the patch branch of `run_experiment` (`db.add_undo` before `PATCH`, `db.finish_undo` after `RESTORE`, `RuntimeError` on a failed restore).
+- `orchestrator/storage/db.py`: `add_undo`, `finish_undo`; `orchestrator/storage/schema.sql`: `undo_actions`.
 - `charts/chaos-agent/templates/mcp-rbac.yaml`: the `-snapshots` Role.
 
 
@@ -747,7 +748,7 @@ Chaos on the GitOps tool itself stays possible the right way: scaling `argocd-ap
 - **Trade-offs:** enforced by the orchestrator only, not by the admission policy, so a direct call to the disrupt server bypasses it. A new operator with the same risk is open until someone adds its group.
 
 ### In the code
-- Replaced by ADR-0035: `DEFAULT_DENY_GROUPS`, `deny_groups` and `denied_group` were removed from `orchestrator/run_config.py` on 2026-11-27. The reasons for each group above live on as comments in `lab/apps/boutique/roe.yaml`.
+- Replaced by ADR-0035: `DEFAULT_DENY_GROUPS`, `deny_groups` and `denied_group` were removed from `orchestrator/config.py` on 2026-11-27. The reasons for each group above live on as comments in `lab/apps/boutique/roe.yaml`.
 
 
 ---
@@ -775,9 +776,9 @@ Option 3. Empty by default, since only the cluster owner knows what is unsafe. T
 - **Trade-offs:** an owner who forgets to list a fragile store leaves it open. Protection is by name, so it covers direct actions on the workload, not indirect effects (deleting a pod of a service that writes to it).
 
 ### In the code
-- `orchestrator/run_config.py`: `protected_workloads` in `ROE_DEFAULTS` and its check in `load_roe`.
-- `orchestrator/runner.py`: `check` (`action["name"] in roe["protected_workloads"]`).
-- `orchestrator/agent.py`: `format_rules`.
+- `orchestrator/config.py`: `protected_workloads` in `ROE_DEFAULTS` and its check in `load_roe`.
+- `orchestrator/experiments/runner.py`: `check` (`action["name"] in roe["protected_workloads"]`).
+- `orchestrator/agent/loop.py`: `format_rules`.
 - `lab/apps/boutique/roe.yaml`: `protected_workloads: [redis-cart]`, with the reason.
 
 
@@ -787,8 +788,8 @@ Option 3. Empty by default, since only the cluster owner knows what is unsafe. T
 
 ## ADR-0020: Three inputs with three owners: target.yaml, the RoE, and the chart values
 
-**Status:** Accepted, 2026-11-26 (measurement and caps added 2026-11-27)
-**Related:** ADR-0005 (chart), ADR-0018 (deny groups), ADR-0019 (protected workloads), ADR-0026 (measurement settings)
+**Status:** Accepted, 2026-11-26 (measurement and caps added 2026-11-27; max_model_rounds and the orchestrator's values added 2026-11-28)
+**Related:** ADR-0039 (the orchestrator in the chart), ADR-0005 (chart), ADR-0018 (deny groups), ADR-0019 (protected workloads), ADR-0026 (measurement settings)
 
 ### Context
 A run needs to know what the application is, what normal looks like for it, what the agent may do, and what the cluster can tolerate. The mentor asked that the agent start from a document describing the application's expectations. The question: one configuration file, or several, and who writes each?
@@ -800,8 +801,8 @@ A run needs to know what the application is, what normal looks like for it, what
 ### Decision
 Option 2.
 - **`target.yaml`, the application team:** the entrypoint Service and port, the user journeys (steps, and whether they write data), the steady state (success rate and p95), and how to measure the application (ADR-0026). The agent reads it.
-- **The RoE, security or operations:** scope (namespaces), the highest level, whether write journeys and node actions are allowed, protected workloads, denied API groups, how many experiments and how long a change may stay. Every optional setting defaults to the safe value: an RoE that says nothing allows nothing extra.
-- **The chart values, the cluster admin:** which namespaces the servers may touch at all, which levels are deployed, and the probe's caps.
+- **The RoE, security or operations:** scope (namespaces), the highest level, whether write journeys and node actions are allowed, protected workloads, denied API groups, how many experiments, how many rounds of the model (`max_model_rounds`, default 30, at most 100: the closest thing to a cost limit until `budget_usd` is enforced), and how long a change may stay. Every optional setting defaults to the safe value: an RoE that says nothing allows nothing extra.
+- **The chart values, the cluster admin:** which namespaces the servers may touch at all, which levels are deployed, the probe's caps, and for the orchestrator (ADR-0039) the model, the namespace under test, the ConfigMap that holds the two files above, the Secret with the API key, and a schedule.
 
 Each is checked before a run starts; a malformed file stops the run with a message that names the file and the setting.
 
@@ -810,7 +811,7 @@ Each is checked before a run starts; a malformed file stops the run with a messa
 - **Trade-offs:** three files to keep consistent: a target can ask for a rate the chart caps lower, or an RoE can allow a hold longer than the probe's longest run; today that is found only at the first measurement (follow-up: a `get_limits` observe tool).
 
 ### In the code
-- `orchestrator/run_config.py`: `load_target`, `load_roe`, `ROE_DEFAULTS`, `MEASUREMENT_DEFAULTS`.
+- `orchestrator/config.py`: `load_target`, `load_roe`, `ROE_DEFAULTS`, `MEASUREMENT_DEFAULTS`.
 - `lab/apps/boutique/target.yaml`, `lab/apps/boutique/roe.yaml`: the lab's two files, with comments for every setting.
 - `charts/chaos-agent/values.yaml`: `mcp.allowedNamespaces`, `mcp.levels`, `mcp.levels.probe.limits`.
 
@@ -862,7 +863,7 @@ This matches how chaos tools measure steady state: Litmus's continuous httpProbe
 - `servers/mcp/probe.py`: `measure_journeys`, `run_k6`, `summarize`.
 - `servers/mcp/journeys.js`: `options.scenarios` (`constant-arrival-rate`, one per journey), `run`.
 - `servers/mcp/Dockerfile`: `COPY --from=k6`.
-- `orchestrator/runner.py`: the background `measuring` task in `run_experiment`.
+- `orchestrator/experiments/runner.py`: the background `measuring` task in `run_experiment`.
 
 
 ---
@@ -891,7 +892,7 @@ Option 2. `run` in `journeys.js` computes the arrival second from `exec.scenario
 ### In the code
 - `servers/mcp/journeys.js`: `run`, the `second` tag.
 - `servers/mcp/probe.py`: `summarize`, bucketing by `tags["second"]`.
-- `orchestrator/experiment.py`: `statuses_of`, `range(measurement["measure_for_s"])`.
+- `orchestrator/experiments/judge.py`: `statuses_of`, `range(measurement["measure_for_s"])`.
 
 
 ---
@@ -916,7 +917,7 @@ After an experiment we have, for every journey and every second, how many users 
 2. **A timeline of one character per second,** plus totals before and after the change. A minute of seconds fits in one short line, for a few dozen tokens.
 
 ### Decision
-Code decides, in `experiment.py`:
+Code decides, in `experiments/judge.py`:
 - **Every second of every journey gets a status:** `fail` if the success rate is below `steady_state.success_rate`, `slow` if everything succeeded but p95 is above `steady_state.p95_ms`, `no_data` if nobody arrived, otherwise `ok`. Success comes first: a second with failures is `fail` whatever its p95.
 - **inconclusive** (changed by ADR-0036 to at least `MIN_BROKEN_S` seconds) if any second before the action, in the steady check or in the measurement, was not `ok`: the result cannot be told apart from what was already there. It shows the timelines of both, `baseline` and `before_action`, so the model can see why.
 - **broke** if, after the action, at least `MIN_BROKEN_S` (2) seconds were not `ok`, or any user could not be sent, or the journey had not recovered by the end of the measurement.
@@ -934,8 +935,8 @@ The model gets the verdict, the timeline, the totals before and after (success, 
 - **Trade-offs:** the verdict is only as good as the steady state in `target.yaml`. A threshold that is loose for the system's normal (500 ms against a normal 10 to 20 ms) lets a degraded system pass as steady: in the run of 2026-11-27, step 49 started on a system at 270 ms and was inconclusive (follow-up: a steady check that also compares to the system's own normal). `MIN_BROKEN_S` is a fixed constant, not per application.
 
 ### In the code
-- `orchestrator/experiment.py`: `TIMELINE_CHARS`, `MIN_BROKEN_S`, `status_of`, `statuses_of`, `timeline`, `phase`, `recovered_at`, `judge`.
-- `orchestrator/runner.py`: `second_of` (which second of the measurement the action fell in) and the call to `experiment.judge` in `run_experiment`.
+- `orchestrator/experiments/judge.py`: `TIMELINE_CHARS`, `MIN_BROKEN_S`, `status_of`, `statuses_of`, `timeline`, `phase`, `recovered_at`, `judge`.
+- `orchestrator/experiments/runner.py`: `second_of` (which second of the measurement the action fell in) and the call to `judge.judge` in `run_experiment`.
 
 
 ---
@@ -967,8 +968,8 @@ Option 3. Every measurement starts `warmup_ignored_s` seconds earlier; the runne
 - **Trade-offs:** each experiment is `warmup_ignored_s` seconds longer (5 by default), and the warm-up of the experiment measurement adds to the time a change is measured before it is made, not to the disruption.
 
 ### In the code
-- `orchestrator/runner.py`: `without_warmup`, `wait_for_steady`, and the `warmup` lines in step 2 and step 4 of `run_experiment`.
-- `orchestrator/run_config.py`: `warmup_ignored_s` in `MEASUREMENT_DEFAULTS`.
+- `orchestrator/experiments/runner.py`: `without_warmup`, `wait_for_steady`, and the `warmup` lines in step 2 and step 4 of `run_experiment`.
+- `orchestrator/config.py`: `warmup_ignored_s` in `MEASUREMENT_DEFAULTS`.
 
 
 ---
@@ -1002,9 +1003,9 @@ Option 3. `wait_for_steady` measures `warmup_ignored_s + steady_check_s`, and ac
 - **Not solved:** the check compares to the steady state's thresholds, not to the system's own normal, so a degraded system under the threshold passes (ADR-0023).
 
 ### In the code
-- `orchestrator/runner.py`: `wait_for_steady`; step 1 of `run_experiment` (`state["experiments"] += 1` only after a steady check); the `not_run` and `inconclusive` sentences in `run_experiment_tool`.
-- `orchestrator/run_config.py`: `steady_check_s`, `steady_check_attempts`, `wait_between_steady_checks_s` in `MEASUREMENT_DEFAULTS`, and the minimum for `steady_check_s`.
-- `orchestrator/agent.py`: the `not_run` and `inconclusive` bullets in `SYSTEM_PROMPT`.
+- `orchestrator/experiments/runner.py`: `wait_for_steady`; step 1 of `run_experiment` (`state["experiments"] += 1` only after a steady check); the `not_run` and `inconclusive` sentences in `run_experiment_tool`.
+- `orchestrator/config.py`: `steady_check_s`, `steady_check_attempts`, `wait_between_steady_checks_s` in `MEASUREMENT_DEFAULTS`, and the minimum for `steady_check_s`.
+- `orchestrator/agent/loop.py`: the `not_run` and `inconclusive` bullets in `SYSTEM_PROMPT`.
 - `orchestrator/tests/try_experiment.py`: one fixed experiment through the runner, without the model.
 
 
@@ -1018,7 +1019,7 @@ Option 3. `wait_for_steady` measures `warmup_ignored_s + steady_check_s`, and ac
 **Related:** ADR-0003 (any application), ADR-0020 (owners), ADR-0021 (k6), ADR-0025 (steady check)
 
 ### Context
-Every timing and rate of a measurement was a constant in the code: the warm-up, the steady check, the seconds before the action and after the restore, the rate (`runner.py`), and the request timeout and the number of virtual users (`probe.py`). These depend on the application. In the lab, payment recovers 25 s after a restore, so a 30 s recovery window barely fits; an application with a 60 s readiness probe would always look broken. A JVM service may need 30 s to warm up. Customers had no way to change any of them, which breaks ADR-0003.
+Every timing and rate of a measurement was a constant in the code: the warm-up, the steady check, the seconds before the action and after the restore, the rate (`experiments/runner.py`), and the request timeout and the number of virtual users (`probe.py`). These depend on the application. In the lab, payment recovers 25 s after a restore, so a 30 s recovery window barely fits; an application with a 60 s readiness probe would always look broken. A JVM service may need 30 s to warm up. Customers had no way to change any of them, which breaks ADR-0003.
 
 ### Options
 1. **Keep the constants and pick conservative values.** Nothing to build. Long windows on every experiment, still wrong for some applications.
@@ -1039,8 +1040,8 @@ Option 4.
 - **Not solved:** rates below 1 per second (k6 supports them through `timeUnit`, which would change the per-second judging).
 
 ### In the code
-- `orchestrator/run_config.py`: `MEASUREMENT_DEFAULTS`, `MEASUREMENT_MINIMUMS`, and the `measurement` checks at the end of `load_target`.
-- `orchestrator/runner.py`: `run_experiment` (`settings = target["measurement"]`, `measure`) and `wait_for_steady`.
+- `orchestrator/config.py`: `MEASUREMENT_DEFAULTS`, `MEASUREMENT_MINIMUMS`, and the `measurement` checks at the end of `load_target`.
+- `orchestrator/experiments/runner.py`: `run_experiment` (`settings = target["measurement"]`, `measure`) and `wait_for_steady`.
 - `servers/mcp/probe.py`: the caps at the top, `concurrent_users`, and the checks in `measure_journeys`.
 - `servers/mcp/journeys.js`: `options.scenarios` (`rate`, `duration`, `preAllocatedVUs`, `maxVUs`, `gracefulStop`) and the request `timeout` in `run`.
 - `charts/chaos-agent/values.yaml`: `mcp.levels.probe.limits`; `charts/chaos-agent/templates/mcp.yaml`: the `with $config.limits` env block.
@@ -1084,8 +1085,8 @@ Option 2.
 - **Trade-offs:** reproduction costs experiments from the budget. The prompt still cannot make the agent test what it has no tool for (zones, latency): that needs ADR-0030 and Chaos Mesh. Added later the same day, with node failures (ADR-0030): every hypothesis names the real-world event it simulates (a pod crashing, a node or zone going down, a bad rollout, a dependency slowing down or down for every caller); scaling to 0 is framed as testing the callers; Placement is used to find what a node or zone failure would take down; and the next experiment is planned on where pods landed, from placement_events.
 
 ### In the code
-- `orchestrator/agent.py`: `SYSTEM_PROMPT`, the Method bullets and the summary structure; `format_profile` (the measurement line, so the model knows a 10 s timeout is ours).
-- `orchestrator/runner.py`: `finish` in `run_experiment` returns `{"step": step, ...}`.
+- `orchestrator/agent/loop.py`: `SYSTEM_PROMPT`, the Method bullets and the summary structure; `format_profile` (the measurement line, so the model knows a 10 s timeout is ours).
+- `orchestrator/experiments/runner.py`: `finish` in `run_experiment` returns `{"step": step, ...}`.
 
 
 ---
@@ -1210,13 +1211,13 @@ Every action so far works on objects in the tested namespaces. None of them test
 - **Not solved:** an ungraceful node death with the real detection delay (backlog, with AWS FIS). A watchdog that uncordons if the orchestrator dies and never comes back (backlog; ADR-0031 covers a restart).
 
 ### In the code
-- Built: the placement tool, `get_placement` in `servers/mcp/k8s.py`, with `collect_placement` in `orchestrator/agent.py` and the observe `-nodes` ClusterRole in `charts/chaos-agent/templates/mcp-rbac.yaml`.
+- Built: the placement tool, `get_placement` in `servers/mcp/k8s.py`, with `collect_placement` in `orchestrator/agent/loop.py` and the observe `-nodes` ClusterRole in `charts/chaos-agent/templates/mcp-rbac.yaml`.
 - Built: the node tools in `servers/mcp/disrupt.py` (`NODE_ACTIONS`, `TAINT_PREFIX`, `LOST_TAINT`, `node_to_fail`, `cordon_node`, `taint_node_lost`, `evict_pods`, `restore_node`); `mcp.levels.disrupt.nodeActions` in `charts/chaos-agent/values.yaml`; the disrupt `-nodes` ClusterRole in `mcp-rbac.yaml`; `pods/eviction` in `_helpers.tpl`; `podEviction` and the node validation in `mcp-admission-policy.yaml`.
-- `orchestrator/node_failure.py`: `check`, `targets` (the guards), `merge`, `summary`, `changes` (the placement events), `POLL_S`.
-- `orchestrator/runner.py`: `node_failure` in `ACTIONS`, `NODE_FAILURE_TEXT`, `run_experiment_tool` (node, zone, mode), `check`, and in `run_experiment`: step 0 (the targets), the `node_failure` branch (undo per node, `roll_back`, `watch_placement`, restore).
-- `orchestrator/experiment.py`: `judge(..., recover_from_restore)`.
-- `orchestrator/run_config.py`: `NODE_ACTIONS`, `node_actions` in `ROE_DEFAULTS` and its check.
-- `orchestrator/agent.py`: node_failure offered only when `node_failure.NODE_TOOLS` are loaded; `format_rules`.
+- `orchestrator/experiments/node_failure.py`: `check`, `targets` (the guards), `merge`, `summary`, `changes` (the placement events), `POLL_S`.
+- `orchestrator/experiments/runner.py`: `node_failure` in `ACTIONS`, `NODE_FAILURE_TEXT`, `run_experiment_tool` (node, zone, mode), `check`, and in `run_experiment`: step 0 (the targets), the `node_failure` branch (undo per node, `roll_back`, `watch_placement`, restore).
+- `orchestrator/experiments/judge.py`: `judge(..., recover_from_restore)`.
+- `orchestrator/config.py`: `NODE_ACTIONS`, `node_actions` in `ROE_DEFAULTS` and its check.
+- `orchestrator/agent/loop.py`: node_failure offered only when `node_failure.NODE_TOOLS` are loaded; `format_rules`.
 - `orchestrator/tests/try_experiment.py`: `zone`, a fixed zone failure without the model.
 
 
@@ -1248,9 +1249,9 @@ Option 2 now; option 3 in the backlog. Undos are run through the same `call_tool
 - **Trade-offs:** if the orchestrator is never started again, nothing is restored. An undo whose target was changed by someone else meanwhile will fail on its `resourceVersion` precondition, which is correct but needs a person.
 
 ### In the code
-- `orchestrator/undo.py`: `restore_pending`, `already_restored`.
-- `orchestrator/db.py`: `pending_undos`.
-- `orchestrator/agent.py`: `run_agent` calls `undo.restore_pending` right after loading the tools; `orchestrator/tests/try_experiment.py` does the same.
+- `orchestrator/experiments/undo.py`: `restore_pending`, `already_restored`.
+- `orchestrator/storage/db.py`: `pending_undos`.
+- `orchestrator/agent/loop.py`: `run_agent` calls `undo.restore_pending` right after loading the tools; `orchestrator/tests/try_experiment.py` does the same.
 - **Not solved:** a run killed without a chance to finish (kill -9, a laptop going to sleep) stays `running` in `runs`, and holds the namespace lock (`one_running_run_per_namespace`). `try_agent` does not check `claim_run`'s answer today, so the lab is not blocked; a real entry point must clear stale runs.
 
 
@@ -1336,7 +1337,7 @@ What AI tools around chaos engineering do today: Harness derives an application 
 - **Not solved:** connectors to wikis and incident tools; reranking; learning from a person's corrections.
 
 ### In the code
-- Planned: `charts/chaos-agent` (Postgres image), `orchestrator/schema.sql` (`knowledge_chunks`), `orchestrator/knowledge.py` (chunks, embeddings, search), `orchestrator/agent.py` (the tool, the prompt, indexing at the end of a run).
+- Planned: `charts/chaos-agent` (Postgres image), `orchestrator/storage/schema.sql` (`knowledge_chunks`), `orchestrator/agent/knowledge.py` (chunks, embeddings, search), `orchestrator/agent/loop.py` (the tool, the prompt, indexing at the end of a run).
 
 
 ---
@@ -1417,9 +1418,9 @@ Option 3.
 - **Not solved:** a GitOps controller with self-heal reverts any change to the objects it manages, Rollouts and Deployments alike, within seconds; the experiment then measures the revert. That is a property of how the application is deployed, to be stated in the RoE or detected later.
 
 ### In the code
-- `orchestrator/run_config.py`: the `deny` check in `load_roe`, `denied`.
-- `orchestrator/runner.py`: `check` (`run_config.denied`).
-- `orchestrator/agent.py`: `format_rules`.
+- `orchestrator/config.py`: the `deny` check in `load_roe`, `denied`.
+- `orchestrator/experiments/runner.py`: `check` (`config.denied`).
+- `orchestrator/agent/loop.py`: `format_rules`.
 - `lab/apps/boutique/roe.yaml`: `deny`, with the reason for each entry.
 
 ---
@@ -1449,8 +1450,8 @@ Option 4. The steady check (`wait_for_steady`) stays strict on purpose: when it 
 - **Trade-offs:** a system that flickers with an isolated bad second passes as steady before the action, as it would pass as unbroken after it. A system that is really unsteady is caught by the strict steady check, and by the stricter check against the system's own normal that is still to be designed.
 
 ### In the code
-- `orchestrator/experiment.py`: the inconclusive condition in `judge`.
-- `orchestrator/tests/unit/test_experiment.py`: one bad second before the action, two bad seconds, a bad second in the baseline and one before the action adding up, and a bad second before the action not counted in `broken_s`.
+- `orchestrator/experiments/judge.py`: the inconclusive condition in `judge`.
+- `orchestrator/tests/unit/test_judge.py`: one bad second before the action, two bad seconds, a bad second in the baseline and one before the action adding up, and a bad second before the action not counted in `broken_s`.
 
 
 ---
@@ -1504,7 +1505,7 @@ Option 4 and option 2.
 
 ## ADR-0038: The model reads what Kubernetes did through inspect_workload, a read-only observe tool passed through as it is, with event messages redacted
 
-**Status:** Proposed, 2026-11-28 (being built)
+**Status:** Accepted, 2026-11-28
 **Changes:** ADR-0010 (the model's tools)
 **Related:** ADR-0008 (what the servers give), ADR-0029 (env values), ADR-0016 (denylist, no Secrets for observe)
 
@@ -1531,12 +1532,13 @@ Option 2, option 2 and option 3.
   - **rollout:** the update strategy (`maxSurge`, `maxUnavailable`, or a StatefulSet's or DaemonSet's update strategy), `minReadySeconds`, `progressDeadlineSeconds`, the replica counts of the status (updated, ready, available, unavailable), its conditions, and `generation` against `observedGeneration` (a rollout still in progress).
   - **pods:** every pod the workload owns, found by the owner chain already used by `get_placement`: node, phase, ready, restarts per container, and the last terminated state (reason, exit code, finished at).
   - **events:** the 30 most recent of the last `since_s` seconds (default 600; events are kept for about an hour), on the workload, its ReplicaSets and its pods: time, type, reason, object, count and message.
-- **Passed through:** `READ_TOOLS` in the orchestrator lists the observe tools the model may call directly; their schemas come from the server; calls go through `tools.call_tool` with that allowlist and the RoE's scope, and are recorded as steps. Tools that change anything stay behind `run_experiment`.
+- **Passed through:** `READ_TOOLS` in the orchestrator lists the observe tools the model may call directly; their schemas come from the server; calls go through `mcp_client.call_tool` with that allowlist and the RoE's scope, and are recorded as steps. Tools that change anything stay behind `run_experiment`.
 - **Redaction, inside the server, before anything is returned:**
   - **Exec probes:** an `Unhealthy` event of a container whose probe is `exec` keeps its reason and the probe's type, and its message is replaced by `message withheld (exec probe output)`.
   - **Env literals:** every literal env value of the workload's containers is read inside the function only to be searched for, and replaced by `[redacted]` wherever it appears in a message. The values are never returned.
   - **Length:** every message is cut at 500 characters, with `... (truncated)` at the end. 200 was considered and rejected: a `FailedScheduling` message on a four-node cluster is about 290 characters, and the part that explains W1 ("didn't match Pod's node affinity/selector") comes after the 150th.
-- **RBAC:** the built-in `view` ClusterRole that observe is bound to already reads pods, ReplicaSets and events (to be verified against the cluster before it is relied on).
+- **RBAC:** the built-in `view` ClusterRole that observe is bound to already reads pods, ReplicaSets and events (checked on the lab cluster); the `chart` job in CI checks it with `kubectl auth can-i` as observe's ServiceAccount.
+- **Container messages are never returned:** `lastState.terminated.message` comes from the application's `terminationMessagePath` and can carry anything; pods show reasons and exit codes only.
 - **Prompt:** when an experiment broke or surprised the agent, inspect the workloads involved before choosing the next experiment.
 
 ### Consequences
@@ -1545,7 +1547,58 @@ Option 2, option 2 and option 3.
 - **Not solved:** values from Secrets and from files the container reads are unknown to the server, so a message other than an exec probe's that carries one is only cut, not redacted; such messages are rare, since the remaining events are templates of Kubernetes components. Pattern-based redaction (gitleaks or similar) is required before any tool returns pod logs, which are application output by nature.
 
 ### In the code
-- Planned: `servers/mcp/k8s.py` (`inspect_workload`, the redaction), `servers/mcp/server.py` (`TOOLS_BY_LEVEL`), `orchestrator/agent.py` (`READ_TOOLS`, the prompt), unit tests with the canary in an event message.
+- `servers/mcp/k8s.py`: `inspect_workload`, `literal_env_values`, `exec_probe_containers`, `redact`, `event_message`, `event_matches`, `rollout_facts`, `pod_state`.
+- `servers/mcp/server.py`: `TOOLS_BY_LEVEL`.
+- `orchestrator/agent/loop.py`: `READ_TOOLS`, the prompt.
+- `servers/mcp/tests/unit/test_inspect.py`: the canary in event messages, exec probes, deleted pods, container messages.
+- `.github/workflows/ci.yaml`: the `kubectl auth can-i` step.
+
+
+---
+
+<a id="adr-0039"></a>
+
+## ADR-0039: The orchestrator ships in the chart as a CronJob of runs, with no Kubernetes access, its inputs from a ConfigMap and its API key from the customer's Secret
+
+**Status:** Accepted, 2026-11-28
+**Related:** ADR-0005 (the product is a chart), ADR-0008 (what the servers give), ADR-0020 (inputs and owners), ADR-0031 (undo at start), ADR-0033 (the embedding model), ADR-0037 (the MCP image)
+
+### Context
+Until now the chart installed Postgres and the MCP servers, and the orchestrator ran on a laptop with port-forwards and an API key typed into the shell: a customer who installed the chart got the infrastructure and nothing that runs it. Four questions: how a run is started, where its inputs come from, how it gets the Anthropic API key, and what it may reach.
+
+### Options
+**How a run is started:**
+1. **A Deployment that runs forever and starts runs on a schedule or a request.** Needs a scheduler and an API of its own.
+2. **A Job per run, made by hand from a template the customer keeps.** Simple, but every customer writes the same Job.
+3. **A CronJob in the chart, suspended unless a schedule is set;** a run on demand is `kubectl create job --from=cronjob/...`, and a schedule makes it a regular regression run.
+
+**Where the inputs come from:**
+1. **As YAML inside the chart values.** One place, but `roe.yaml` and `target.yaml` belong to other owners (ADR-0020), and copying them into values splits each file in two.
+2. **A ConfigMap the customer makes from the files they keep in git,** named in the values.
+
+**How the API key gets in:**
+1. **A value in the chart.** It would sit in plain text in Helm's release history (`helm get values`).
+2. **`existingSecret`: a Secret the customer makes,** by hand, with External Secrets, Vault or Sealed Secrets, named in the values; the same pattern as Postgres's password.
+
+### Decision
+Option 3, option 2 and option 2.
+- **The CronJob:** `concurrencyPolicy: Forbid`; `backoffLimit: 0`, since a retried run would run experiments again on its own; `activeDeadlineSeconds` (default 3600); finished Jobs kept a day. Pinned like the MCP servers by `nodeSelector` and `tolerations`; the disrupt server already refuses to fail a node that runs the chaos agent.
+- **No Kubernetes access at all:** its own ServiceAccount with `automountServiceAccountToken: false`. It reaches the cluster only through the MCP servers (`MCP_<LEVEL>_URL`, the servers' Services), Postgres through its Service, and Claude with the key from the Secret.
+- **Checked when the chart renders:** an image tag, a namespace that is one of `mcp.allowedNamespaces`, the inputs ConfigMap, the Secret, observe enabled (every run starts from discovery) and Postgres enabled.
+- **`main.py`,** the Job's entry point: everything from the environment (`ROE_FILE`, `TARGET_FILE`, `TARGET_NAMESPACE`, `CHAOS_MODEL`, `PG*`); the inputs checked before anything is recorded (exit 2); a run that cannot take the namespace's lock is not started (exit 2); SIGTERM, which Kubernetes sends at the deadline, and Ctrl+C mark the run aborted (exit 130), and its pending undos run when the next run starts (ADR-0031). This also ends the stale `running` row a Ctrl+C left before.
+- **The image:** Python 3.14 slim, multi-stage with a venv without pip like ADR-0037; not Chainguard, since onnxruntime has no 3.15 wheel. The embedding model is downloaded at build time and `HF_HUB_OFFLINE=1` is set, so an air-gapped cluster runs and no run waits for a download. User 65532, like the MCP image; read-only root filesystem, `HOME=/tmp` on an emptyDir.
+- **`max_model_rounds` in the RoE** replaces the constant `MAX_ITERATIONS` (ADR-0020).
+- **In the lab:** `lab/dev.sh load mcp|orchestrator` builds an image and loads it into the control-plane only, then removes the untagged copies earlier loads left (they had filled the disk); `lab/run-agent.sh` makes the inputs ConfigMap and the Secret (the key read without echo and passed through stdin, never on a command line), starts a Job, optionally with another model, and follows its logs.
+
+### Consequences
+- **Gains:** the chart is the whole product: installed, it runs. A compromised orchestrator has no Kubernetes credentials. Inputs stay in their owners' files; the key never passes through Helm.
+- **Trade-offs:** a run on demand needs `kubectl create job`; there is no API or UI to start one. The orchestrator image is Debian-based and is not yet built, scanned or signed in CI like the MCP image; its dependencies are pinned but not hashed.
+- **Not solved:** Claude through AWS Bedrock or Google Vertex with workload identity, with no API key (the SDK supports both; a `provider` value would choose); an external Postgres instead of the chart's.
+
+### In the code
+- `charts/chaos-agent/templates/orchestrator.yaml`, `values.yaml` (`orchestrator`), `ci/all-levels-values.yaml`.
+- `orchestrator/main.py`, `orchestrator/Dockerfile`, `orchestrator/mcp_client.py` (`SERVERS` from env), `orchestrator/config.py` (`max_model_rounds`).
+- `lab/chaos-agent-values.yaml`, `lab/dev.sh` (`load`), `lab/run-agent.sh`.
 
 
 ---

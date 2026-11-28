@@ -5,11 +5,11 @@ import json
 import sys
 from pathlib import Path
 
-import db
-import run_config
-import runner
-import tools
-import undo
+from storage import db
+import config
+from experiments import runner
+import mcp_client
+from experiments import undo
 
 LAB = Path(__file__).resolve().parents[2] / "lab" / "apps" / "boutique"
 
@@ -37,7 +37,7 @@ async def measure_once(conn, run_id, server_tools, scope, target):
     settings = target["measurement"]
     entry = target["entrypoint"]
     home = {j["name"]: j["steps"] for j in target["journeys"] if j["name"] == "home"}
-    output = json.loads(await tools.call_tool(conn, run_id, server_tools, scope, runner.MEASURE, {
+    output = json.loads(await mcp_client.call_tool(conn, run_id, server_tools, scope, runner.MEASURE, {
         "namespace": "boutique", "service": entry["service"], "port": entry["port"], "journeys": home,
         "measure_for_s": 15, "new_users_per_second": settings["new_users_per_second"],
         "fail_request_after_s": settings["fail_request_after_s"]}))
@@ -54,15 +54,15 @@ async def measure_once(conn, run_id, server_tools, scope, target):
 
 
 async def main():
-    roe = run_config.load_roe(LAB / "roe.yaml")
-    target = run_config.load_target(LAB / "target.yaml")
+    roe = config.load_roe(LAB / "roe.yaml")
+    target = config.load_target(LAB / "target.yaml")
     scope = roe["scope"]["namespaces"]
     with db.connect() as conn:
         run_id = db.create_run(conn, "boutique", "try_experiment", roe["max_level"], roe, 1, profile=target)
         db.claim_run(conn, run_id)
         print(f"run {run_id}")
         try:
-            server_tools = {t["name"] for t in await tools.load_tools(roe["max_level"])}
+            server_tools = {t["name"] for t in await mcp_client.load_tools(roe["max_level"])}
             restored = await undo.restore_pending(conn, run_id, server_tools, scope)
             if restored:
                 print(f"restored what an earlier run left changed: steps {restored}")

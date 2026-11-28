@@ -11,7 +11,11 @@ NODE_ACTIONS = ["none", "scope_only", "whole_node"]
 
 # The safe value of every optional RoE setting: an RoE that says nothing allows nothing extra.
 ROE_DEFAULTS = {"allow_write_journeys": False, "node_actions": "none",
-                "max_experiments": 10, "max_restore_after_s": 60, "protected_workloads": []}
+                "max_experiments": 10, "max_restore_after_s": 60, "protected_workloads": [],
+                "max_model_rounds": 30}
+
+# Past this many rounds the conversation, sent again on every round, costs more than the rounds are worth.
+MAX_MODEL_ROUNDS_LIMIT = 100
 
 # The measurement when target.yaml leaves a setting out.
 MEASUREMENT_DEFAULTS = {"new_users_per_second": 2, "fail_request_after_s": 10, "warmup_ignored_s": 5,
@@ -48,9 +52,11 @@ def load_roe(path):
     # Not off: in YAML 1.1 an unquoted off is the boolean false.
     if roe["node_actions"] not in NODE_ACTIONS:
         raise ValueError(f"{path}: node_actions must be one of {NODE_ACTIONS}")
-    for key in ("max_experiments", "max_restore_after_s"):
+    for key in ("max_experiments", "max_restore_after_s", "max_model_rounds"):
         if not positive_int(roe[key]):
             raise ValueError(f"{path}: {key} must be a whole number above 0")
+    if roe["max_model_rounds"] > MAX_MODEL_ROUNDS_LIMIT:
+        raise ValueError(f"{path}: max_model_rounds must be at most {MAX_MODEL_ROUNDS_LIMIT}")
     # No default: what the agent may not touch is the RoE owner's decision, and it must be made on purpose.
     if "deny" not in roe:
         raise ValueError(f"{path}: deny is required: the API groups and group/Kinds the agent may never "

@@ -8,3 +8,12 @@ mcp:
     disrupt:
       enabled: true
       nodeActions: whole_node
+
+orchestrator:
+  enabled: true
+  image:
+    tag: ci
+  namespace: shop
+  inputsConfigMap: ci-inputs
+  anthropic:
+    existingSecret: ci-anthropic

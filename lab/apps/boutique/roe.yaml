@@ -19,6 +19,8 @@ protected_workloads: [redis-cart]
 
 # Limits per run.
 max_experiments: 15
+# Rounds of the model in one run (experiments, searches, inspections): what a run may cost.
+max_model_rounds: 30
 max_restore_after_s: 120
 
 # What the agent may never change, on top of what the disrupt server always refuses (Secrets,

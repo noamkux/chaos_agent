@@ -3,16 +3,16 @@ from pathlib import Path
 
 import pytest
 
-import run_config
+import config
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 @pytest.fixture
 def roe():
-    return run_config.load_roe(FIXTURES / "roe.yaml")
+    return config.load_roe(FIXTURES / "roe.yaml")
 
 
 @pytest.fixture
 def target():
-    return run_config.load_target(FIXTURES / "target.yaml")
+    return config.load_target(FIXTURES / "target.yaml")

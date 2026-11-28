@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-import run_config
+import config
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -28,7 +28,7 @@ def fixture_target():
 # ---------- the RoE
 
 def test_roe_loads_as_written():
-    roe = run_config.load_roe(FIXTURES / "roe.yaml")
+    roe = config.load_roe(FIXTURES / "roe.yaml")
     assert roe["scope"]["namespaces"] == ["shop"]
     assert roe["node_actions"] == "scope_only"
     assert roe["protected_workloads"] == ["db"]
@@ -37,19 +37,20 @@ def test_roe_loads_as_written():
 
 
 def test_roe_defaults_allow_nothing_extra(tmp_path):
-    roe = run_config.load_roe(write(tmp_path, "roe.yaml",
+    roe = config.load_roe(write(tmp_path, "roe.yaml",
                                     {"scope": {"namespaces": ["app"]}, "max_level": "probe", "deny": []}))
     assert roe["allow_write_journeys"] is False
     assert roe["node_actions"] == "none"
     assert roe["protected_workloads"] == []
     assert roe["max_experiments"] == 10
+    assert roe["max_model_rounds"] == 30
 
 
 def test_roe_without_deny_is_refused(tmp_path):
     data = fixture_roe()
     del data["deny"]
     with pytest.raises(ValueError, match="deny is required"):
-        run_config.load_roe(write(tmp_path, "roe.yaml", data))
+        config.load_roe(write(tmp_path, "roe.yaml", data))
 
 
 @pytest.mark.parametrize("change, message", [
@@ -60,13 +61,15 @@ def test_roe_without_deny_is_refused(tmp_path):
     ({"node_actions": False}, "node_actions"),
     ({"node_actions": "off"}, "node_actions"),
     ({"max_experiments": 0}, "max_experiments"),
+    ({"max_model_rounds": 0}, "max_model_rounds"),
+    ({"max_model_rounds": 101}, "max_model_rounds must be at most 100"),
     ({"max_restore_after_s": True}, "max_restore_after_s"),
     ({"deny": "argoproj.io"}, "deny must be a list"),
     ({"protected_workloads": [""]}, "protected_workloads"),
 ])
 def test_malformed_roe_is_refused(tmp_path, change, message):
     with pytest.raises(ValueError, match=message):
-        run_config.load_roe(write(tmp_path, "roe.yaml", {**fixture_roe(), **change}))
+        config.load_roe(write(tmp_path, "roe.yaml", {**fixture_roe(), **change}))
 
 
 @pytest.mark.parametrize("kind, deny, expected", [
@@ -77,23 +80,23 @@ def test_malformed_roe_is_refused(tmp_path, change, message):
     ("apps/Deployment", [], False),
 ])
 def test_denied(kind, deny, expected):
-    assert run_config.denied(kind, deny) is expected
+    assert config.denied(kind, deny) is expected
 
 
 # ---------- target.yaml
 
 def test_target_without_measurement_gets_every_default():
-    target = run_config.load_target(FIXTURES / "target.yaml")
-    assert target["measurement"] == run_config.MEASUREMENT_DEFAULTS
+    target = config.load_target(FIXTURES / "target.yaml")
+    assert target["measurement"] == config.MEASUREMENT_DEFAULTS
     assert target["entrypoint"] == {"service": "web", "port": 8080}
 
 
 def test_measurement_defaults_fill_what_is_left_out(tmp_path):
     data = fixture_target()
     data["measurement"] = {"measure_after_restore_s": 60}
-    target = run_config.load_target(write(tmp_path, "target.yaml", data))
+    target = config.load_target(write(tmp_path, "target.yaml", data))
     assert target["measurement"]["measure_after_restore_s"] == 60
-    assert target["measurement"]["warmup_ignored_s"] == run_config.MEASUREMENT_DEFAULTS["warmup_ignored_s"]
+    assert target["measurement"]["warmup_ignored_s"] == config.MEASUREMENT_DEFAULTS["warmup_ignored_s"]
 
 
 @pytest.mark.parametrize("measurement, message", [
@@ -107,7 +110,7 @@ def test_measurement_defaults_fill_what_is_left_out(tmp_path):
 def test_malformed_measurement_is_refused(tmp_path, measurement, message):
     data = {**fixture_target(), "measurement": measurement}
     with pytest.raises(ValueError, match=message):
-        run_config.load_target(write(tmp_path, "target.yaml", data))
+        config.load_target(write(tmp_path, "target.yaml", data))
 
 
 @pytest.mark.parametrize("change, message", [
@@ -119,9 +122,9 @@ def test_malformed_measurement_is_refused(tmp_path, measurement, message):
 ])
 def test_malformed_target_is_refused(tmp_path, change, message):
     with pytest.raises(ValueError, match=message):
-        run_config.load_target(write(tmp_path, "target.yaml", {**fixture_target(), **change}))
+        config.load_target(write(tmp_path, "target.yaml", {**fixture_target(), **change}))
 
 
 @pytest.mark.parametrize("value, expected", [(1, True), (0, False), (-3, False), (True, False), ("5", False), (2.0, False)])
 def test_positive_int(value, expected):
-    assert run_config.positive_int(value) is expected
+    assert config.positive_int(value) is expected

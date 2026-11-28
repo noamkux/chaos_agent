@@ -2,7 +2,7 @@
 reported while it runs."""
 import pytest
 
-import node_failure
+from experiments import node_failure
 
 
 def node(name, zone, control_plane=False, schedulable=True):

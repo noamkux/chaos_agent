@@ -1,10 +1,11 @@
 """Bridge between the agent and the MCP servers: filters tools by level and records every call."""
 import json
+import os
 
 from mcp import Client
 from mcp.types import TextContent
 
-import db
+from storage import db
 
 # For each run level, the server levels it may use. Each level includes the ones below it.
 ALLOWED_LEVELS = {
@@ -13,13 +14,11 @@ ALLOWED_LEVELS = {
     "disrupt": ["observe", "probe", "disrupt"],
 }
 
-# One MCP server pod per level; the server name is its level.
-# Local port-forwards until the orchestrator runs as a Job in the cluster (then from env, see the chart task).
-SERVERS = {
-    "observe": "http://127.0.0.1:8081/mcp",
-    "probe": "http://127.0.0.1:8082/mcp",
-    "disrupt": "http://127.0.0.1:8083/mcp",
-}
+# One MCP server pod per level; the server name is its level. In the cluster the chart sets
+# MCP_<LEVEL>_URL to each server's Service; on a laptop they default to lab/dev.sh's port-forwards.
+LOCAL_PORTS = {"observe": 8081, "probe": 8082, "disrupt": 8083}
+SERVERS = {level: os.environ.get(f"MCP_{level.upper()}_URL", f"http://127.0.0.1:{port}/mcp")
+           for level, port in LOCAL_PORTS.items()}
 
 
 async def load_tools(max_level):

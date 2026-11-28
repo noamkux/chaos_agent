@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-import knowledge
+from agent import knowledge
 
 WHEN = datetime(2026, 11, 27, 17, 48, tzinfo=timezone.utc)
 JOURNEY = {"timeline": "..|xx|..", "after_action": {"success": 0.29, "worst_p95_ms": 10002,

@@ -11,10 +11,31 @@ mcp:
     tag: dev
   allowedNamespaces: [boutique]
   levels:
+    # In the cluster for runs of the orchestrator's Job; lab/dev.sh still runs a local one on 8081 for
+    # runs from the laptop.
+    observe:
+      enabled: true
     disrupt:
       enabled: true
       # The lab tests node and zone failures; the chaos agent runs on the control-plane, out of reach.
       nodeActions: whole_node
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+
+# The agent's Job. run-agent.sh makes the inputs ConfigMap from lab/apps/boutique and the Secret with the
+# API key, then starts a run. On the control-plane, like the MCP servers: out of reach of node failures.
+orchestrator:
+  enabled: true
+  image:
+    tag: dev
+  namespace: boutique
+  inputsConfigMap: chaos-agent-boutique-inputs
+  anthropic:
+    existingSecret: chaos-agent-anthropic
   nodeSelector:
     node-role.kubernetes.io/control-plane: ""
   tolerations:

@@ -9,6 +9,9 @@
 #   lab/dev.sh status    show what listens and which tools each server exposes
 #   lab/dev.sh down      stop everything
 #   eval "$(lab/dev.sh env)"   set the PG* variables for the orchestrator in this shell
+#   lab/dev.sh load mcp|orchestrator   build an image as :dev and load it into the cluster's
+#                        control-plane only (where the chart runs it), then remove the untagged copies
+#                        that every earlier load left behind (import-*), which filled the disk before
 #
 # Settings: NAMESPACE (chaos-system), RELEASE (chaos-agent), ALLOWED_NAMESPACES (boutique),
 # PYTHON (python3). Logs go to $LOG_DIR (/tmp/chaos-agent-dev).
@@ -19,6 +22,7 @@ NAMESPACE="${NAMESPACE:-chaos-system}"
 RELEASE="${RELEASE:-chaos-agent}"
 ALLOWED_NAMESPACES="${ALLOWED_NAMESPACES:-boutique}"
 PYTHON="${PYTHON:-python3}"
+CLUSTER="${CLUSTER:-chaos-lab}"
 LOG_DIR="${LOG_DIR:-/tmp/chaos-agent-dev}"
 
 # name, local port, Service, Service port
@@ -107,6 +111,27 @@ status() {
   show_tools
 }
 
+load_image() {
+  local image dir
+  case "${1:-}" in
+    mcp) image=chaos-agent-mcp:dev dir="$REPO_DIR/servers/mcp" ;;
+    orchestrator) image=chaos-agent-orchestrator:dev dir="$REPO_DIR/orchestrator" ;;
+    *) echo "usage: $0 load mcp|orchestrator" >&2; exit 2 ;;
+  esac
+  docker build -t "$image" "$dir"
+  # Only the control-plane: the chart pins the MCP servers and the orchestrator there, and every node
+  # that gets a copy is one more copy on the same small disk.
+  kind load docker-image "$image" --name "$CLUSTER" --nodes "$CLUSTER-control-plane"
+  docker exec "$CLUSTER-control-plane" sh -c \
+    "crictl images | awk '\$1 ~ /import-/ {print \$3}' | sort -u | xargs -r crictl rmi" >/dev/null || true
+  # The cluster has its copy now: drop Docker's, and the build cache, at once. Building both images
+  # with their caches kept took the disk down to a few hundred MB. The next build starts cold.
+  docker image rm "$image" >/dev/null
+  docker builder prune -f >/dev/null
+  docker image prune -f >/dev/null
+  df -h / | tail -1
+}
+
 env_vars() {
   # The password is read from the cluster on every call and never written to a file.
   local password
@@ -119,5 +144,6 @@ case "${1:-}" in
   status) status ;;
   down) stop_all ;;
   env) env_vars ;;
-  *) echo "usage: $0 up | status | down | env" >&2; exit 2 ;;
+  load) load_image "${2:-}" ;;
+  *) echo "usage: $0 up | status | down | env | load mcp|orchestrator" >&2; exit 2 ;;
 esac

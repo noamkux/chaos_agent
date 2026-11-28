@@ -100,6 +100,10 @@ jobs:
                   refused "nodeActions must be none, scope_only or whole_node" \
                       --set mcp.image.tag=ci --set "mcp.allowedNamespaces={shop}" \
                       --set mcp.levels.disrupt.enabled=true --set mcp.levels.disrupt.nodeActions=off
+                  refused "orchestrator.namespace must be one of mcp.allowedNamespaces" \
+                      -f charts/chaos-agent/ci/all-levels-values.yaml --set orchestrator.namespace=kube-system
+                  refused "orchestrator.anthropic.existingSecret is required" \
+                      -f charts/chaos-agent/ci/all-levels-values.yaml --set orchestrator.anthropic.existingSecret=
             - id: kind
               uses: helm/kind-action@ea822c7bf1874f08e5a491df991c228edffc3376 # v1.15.2
               with:

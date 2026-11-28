@@ -4,11 +4,11 @@ import asyncio
 import json
 import time
 
-import db
-import experiment
-import node_failure
-import run_config
-import tools
+from storage import db
+from experiments import judge
+from experiments import node_failure
+import config
+import mcp_client
 
 RUN_EXPERIMENT_NAME = "run_experiment"
 ACTIONS = ["patch", "delete_pod", "node_failure"]
@@ -110,7 +110,7 @@ def check(args, roe, target, done):
         kind = str(action.get("kind", ""))
         if "/" not in kind or not action.get("name"):
             return "action needs kind as group/Kind and a name"
-        if run_config.denied(kind, roe["deny"]):
+        if config.denied(kind, roe["deny"]):
             return f"kind '{kind}' is denied by the Rules of Engagement"
         if action["name"] in roe["protected_workloads"]:
             return f"'{action['name']}' is protected by the Rules of Engagement: measure it, never change it"
@@ -122,7 +122,7 @@ def check(args, roe, target, done):
         return "a patch action needs a non-empty patch"
     if action["type"] in ("patch", "node_failure"):
         restore_after = args.get("restore_after_s")
-        if not run_config.positive_int(restore_after) or restore_after > roe["max_restore_after_s"]:
+        if not config.positive_int(restore_after) or restore_after > roe["max_restore_after_s"]:
             return f"restore_after_s must be 1 to {roe['max_restore_after_s']}"
     return None
 
@@ -152,11 +152,11 @@ async def wait_for_steady(measure, journeys, steady, settings):
         if measured["is_error"]:
             return None, steps, {"reason": f"steady check failed: {measured['content']}"}
         check = without_warmup(measured["content"], warmup)
-        statuses = {j: experiment.statuses_of(check, j, steady) for j in journeys}
+        statuses = {j: judge.statuses_of(check, j, steady) for j in journeys}
         if all(status == "ok" for per_journey in statuses.values() for status in per_journey):
             return check, steps, {}
         problem = {"reason": f"not steady after {attempt + 1} steady checks",
-                   "last_check": {j: experiment.timeline(per_journey, set()) for j, per_journey in statuses.items()}}
+                   "last_check": {j: judge.timeline(per_journey, set()) for j, per_journey in statuses.items()}}
     return None, steps, problem
 
 
@@ -186,7 +186,7 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
     target_args = {"namespace": action.get("namespace"), "kind": action.get("kind"), "name": action.get("name")}
 
     async def call(name, call_args):
-        return json.loads(await tools.call_tool(conn, run_id, server_tools, scope, name, call_args))
+        return json.loads(await mcp_client.call_tool(conn, run_id, server_tools, scope, name, call_args))
 
     def measure(seconds):
         return call(MEASURE, {"namespace": namespace, "service": entry["service"], "port": entry["port"],
@@ -350,7 +350,7 @@ async def run_experiment(conn, run_id, server_tools, roe, target, namespace, sta
         return finish({"verdict": "inconclusive", "reason": f"measurement failed: {measured['content']}",
                        "steps": steps})
     measurement = without_warmup(measured["content"], warmup)
-    result = experiment.judge(baseline, measurement, list(journeys), steady,
+    result = judge.judge(baseline, measurement, list(journeys), steady,
                               second_of(action_time, measurement),
                               second_of(restore_time, measurement) if restore_time else None,
                               recover_from_restore=action["type"] != "node_failure")

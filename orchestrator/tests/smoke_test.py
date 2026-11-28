@@ -1,5 +1,5 @@
 """Manual check of the run lifecycle and the per-namespace lock."""
-import db
+from storage import db
 
 ROE = {"scope": {"namespaces": ["boutique"]}}
 

@@ -1,7 +1,7 @@
 """The rules every experiment must pass before anything is touched, and the warm-up cut."""
 import pytest
 
-import runner
+from experiments import runner
 
 
 def experiment(**action):

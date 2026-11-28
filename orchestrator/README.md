@@ -1,3 +1,13 @@
+## Layout
+
+- `main.py`: the entry point of the chart's Job, one run from the environment.
+- `config.py`: loads and checks the RoE and `target.yaml`.
+- `agent/`: `loop.py`, the loop with the model and its prompt; `knowledge.py`, what the agent remembers.
+- `experiments/`: `runner.py` runs one experiment; `judge.py` decides its verdict; `node_failure.py`; `undo.py`.
+- `storage/`: `db.py` and `schema.sql`.
+- `mcp_client.py`: the bridge to the MCP servers, with the allowlist, the scope and the audit of every call.
+- `tests/unit/`: the unit tests; `tests/try_*.py`: manual runs against the lab.
+
 ## Why a database
 
 The agent is not a script that runs and exits. It is a process that runs for tens of minutes, changes real systems, and can fail at any moment. The database solves five problems that have no good alternative solution.

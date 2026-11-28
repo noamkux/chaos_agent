@@ -29,7 +29,7 @@ The lab is a local cluster that simulates a customer environment. `lab/up.sh` br
 
 **Postgres:** bundled in the chart as a StatefulSet with a PVC. The password comes from an `existingSecret` the customer provides, or is generated once and kept stable across upgrades.
 
-**Database schema (`orchestrator/schema.sql`):**
+**Database schema (`orchestrator/storage/schema.sql`):**
 - `runs`: one row per run; also the queue and the per-namespace lock.
 - `steps`: every LLM call and tool call; the audit log and the checkpoint.
 - `undo_actions`: the inverse of every disruptive action, written before the action runs.
@@ -45,7 +45,7 @@ The agent never touches the cluster directly. It acts only through tools exposed
 - **Small outputs:** `get_workloads` returns an allowlist of fields per Deployment, StatefulSet and DaemonSet (replicas, probes, resources, affinity, security context, volume types, env names and sources) instead of the full object, to save tokens and keep secrets out of the agent's context. Env values are never read.
 - **`get_inventory`:** lists every namespaced kind the API server serves, including CRDs, as `group/Kind` with the names of its objects, and the kinds it could not read with the reason. Secrets and controller-created objects are never listed.
 
-## Tool gating and audit (`orchestrator/tools.py`)
+## Tool gating and audit (`orchestrator/mcp_client.py`)
 
 Every tool call goes through the orchestrator, which enforces the run's rules in three layers:
 
@@ -55,7 +55,7 @@ Every tool call goes through the orchestrator, which enforces the run's rules in
 
 Every call is recorded in `steps` before it runs and completed after, including denied calls, so the eval counts attempted violations and not only successful ones.
 
-## Agent loop (`orchestrator/agent.py`)
+## Agent loop (`orchestrator/agent/loop.py`)
 
 A harness written from scratch on the Claude API with native tool calling, without an agent framework.
 
@@ -68,11 +68,12 @@ A harness written from scratch on the Claude API with native tool calling, witho
 
 ## Facts in the prompt
 
-Before the first LLM call, the orchestrator calls `get_inventory` and `get_workloads` itself, through the same gated and audited path as any tool call (`collect` in `agent.py`). Their results go into the system prompt with their step numbers, and both tools are removed from the model's tools, so the model never spends a call repeating them. If a required kind (Deployments, StatefulSets, DaemonSets, Services) cannot be read, the run fails, so a run never silently tests nothing.
+Before the first LLM call, the orchestrator calls `get_inventory` and `get_workloads` itself, through the same gated and audited path as any tool call (`collect` in `agent/loop.py`). Their results go into the system prompt with their step numbers, and both tools are removed from the model's tools, so the model never spends a call repeating them. If a required kind (Deployments, StatefulSets, DaemonSets, Services) cannot be read, the run fails, so a run never silently tests nothing.
 
 ## Backlog
 
 - **AWS chaos with FIS:** an `aws` MCP server at disrupt level that runs FIS experiment templates. Scope enforced with IAM conditions on resource tags; FIS stop conditions and rollback map to the watchdog and the undo log. Test environment: the weather app on EKS. FIS costs $0.10 per action-minute; the main cost is the AWS environment itself.
 - **DB chaos at protocol level:** connection pool exhaustion, lock contention, slow queries. Requires a dedicated test user from the customer. Infrastructure and network level DB chaos is in scope for v1.
 - **Request-level chaos (Netflix FIT style):** inject faults only into tagged synthetic requests, using Istio fault injection or Chaos Mesh HTTPChaos. Without instrumentation this works only on the first hop.
+- **A role for every run level:** the servers' levels are permission boundaries and stay, but as run levels only disrupt does anything today: an observe or probe run has no `run_experiment` and ends with a summary of the facts. Planned: **observe as assessment**, a report of the weaknesses the facts predict, each with the experiment that would confirm it, for a person to approve before a disrupt run executes it (for production, where nothing may break); **probe as load**, a `load_experiment` that raises `new_users_per_second` step by step until the steady state breaks, and reports where.
 - **Per-run credentials for MCP servers:** servers run with no standing permissions; for each run the orchestrator issues a short-lived ServiceAccount token for the run's level.

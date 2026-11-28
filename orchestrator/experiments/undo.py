@@ -3,8 +3,8 @@ runs before a new run touches anything: a crash in the middle of an experiment l
 (it is written before the change), and this is where it is finally run."""
 import json
 
-import db
-import tools
+from storage import db
+import mcp_client
 
 
 def already_restored(name, content):
@@ -26,7 +26,7 @@ async def restore_pending(conn, run_id, server_tools, scope):
         if name not in server_tools:
             failed.append(f"undo {undo_id} of run {from_run} needs {name}, which this run does not load")
             continue
-        output = json.loads(await tools.call_tool(conn, run_id, server_tools, scope, name, args))
+        output = json.loads(await mcp_client.call_tool(conn, run_id, server_tools, scope, name, args))
         steps.append(output["step"])
         if output["is_error"] and not already_restored(name, output["content"]):
             failed.append(f"undo {undo_id} of run {from_run} ({name} {args}): {output['content']}")

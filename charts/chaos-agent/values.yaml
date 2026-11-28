@@ -53,3 +53,35 @@ mcp:
       memory: 512Mi
   nodeSelector: {}
   tolerations: []
+
+# The agent itself. One run is one Job, made from a CronJob that stays suspended unless schedule is set:
+#   kubectl -n <release namespace> create job --from=cronjob/<release>-orchestrator run-$(date +%s)
+orchestrator:
+  enabled: false
+  image:
+    repository: chaos-agent-orchestrator
+    tag: ""
+    pullPolicy: IfNotPresent
+  model: claude-sonnet-5-5
+  # The namespace of the application under test: one of mcp.allowedNamespaces and of the RoE's scope.
+  namespace: ""
+  # A ConfigMap with two keys, roe.yaml and target.yaml, made from files kept in git, for example:
+  #   kubectl create configmap shop-inputs --from-file=roe.yaml --from-file=target.yaml
+  inputsConfigMap: ""
+  # The Anthropic API key, from a Secret made outside the chart (by hand, External Secrets, Vault...),
+  # so the key is never in these values or in Helm's release history.
+  anthropic:
+    existingSecret: ""
+    key: api-key
+  # Empty: runs only when a Job is created by hand. A cron expression: runs on that schedule.
+  schedule: ""
+  # Kubernetes stops a run after this; the run is marked aborted, and its undos run at the next start.
+  activeDeadlineSeconds: 3600
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  nodeSelector: {}
+  tolerations: []

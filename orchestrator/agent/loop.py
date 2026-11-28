@@ -2,17 +2,16 @@
 
 import asyncio
 import json
-import knowledge
-import node_failure
-import runner
-import db
-import tools
-import undo
+import sys
+from agent import knowledge
+from experiments import node_failure
+from experiments import runner
+from storage import db
+import mcp_client
+from experiments import undo
 
 from anthropic import AsyncAnthropic
 
-# Rounds of the model in one run: up to max_experiments experiments, plus searches and inspections.
-MAX_ITERATIONS = 30
 MAX_TOKENS = 16384
 INVENTORY_TOOL = "observe__get_inventory"
 WORKLOADS_TOOL = "observe__get_workloads"
@@ -50,7 +49,7 @@ When you are done, write a summary:
 - Confirmed weaknesses, only those you reproduced: for each, the steps of the experiments that showed it and reproduced it, which journeys users felt it on and how (timeouts or fast errors, for how many seconds), and how long recovery took.
 - Known from earlier runs: each weakness you checked again, whether it is still there or fixed, with the earlier run and step and the step of this run. List only the ones you ran again in this run.
 - Unconfirmed weaknesses: everything seen only once, even when it looks like a confirmed one, with its step and the experiment that would confirm it.
-- What held, with its steps.
+- What held in this run, with its steps in this run. What held in earlier runs and was not tested again is left out.
 - What you would test next."""
 
 
@@ -90,7 +89,7 @@ async def collect(conn, run_id, allowed, scope, name):
     contents = {}
     steps = []
     for namespace in scope:
-        output = json.loads(await tools.call_tool(conn, run_id, allowed, scope, name, {"namespace": namespace}))
+        output = json.loads(await mcp_client.call_tool(conn, run_id, allowed, scope, name, {"namespace": namespace}))
         steps.append(output["step"])
         if output["is_error"]:
             raise RuntimeError(f"{name} failed in {namespace}: {output['content']}")
@@ -198,7 +197,7 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
     max_level = roe["max_level"]
     scope = roe["scope"]["namespaces"]
     # Every server tool this run's level allows. Only the orchestrator calls them.
-    loaded = await tools.load_tools(max_level)
+    loaded = await mcp_client.load_tools(max_level)
     server_tools = {t["name"] for t in loaded}
     # Before anything else: undo what an earlier run left changed.
     await undo.restore_pending(conn, run_id, server_tools, scope)
@@ -224,6 +223,13 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
         conn, run_id, namespace, workload_names, args)
     available.append(knowledge.search_tool(workload_names))
     read_tools = READ_TOOLS & server_tools
+    # A server running older code than the orchestrator offers fewer tools; say so, instead of the model
+    # silently going without them.
+    missing = sorted(READ_TOOLS - server_tools)
+    if missing:
+        print(f"warning: the servers do not offer {missing}; rebuild and restart them", file=sys.stderr, flush=True)
+        step_id, _ = db.start_step(conn, run_id, "read_tools_missing", {}, allowed=False)
+        db.finish_step(conn, step_id, {"error": f"the servers do not offer {missing}: they run older code"})
     available += [t for t in loaded if t["name"] in read_tools]
 
     system = (SYSTEM_PROMPT + "\n\n" + RUN_SECTION.format(
@@ -235,7 +241,8 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
 
     messages = [{"role": "user", "content": task}]
 
-    for _ in range(MAX_ITERATIONS):
+    # Rounds of the model are limited by the RoE (max_model_rounds): it sets what a run may cost.
+    for _ in range(roe["max_model_rounds"]):
         response = await client.messages.create(
             model=model,
             max_tokens=MAX_TOKENS,
@@ -270,9 +277,9 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
                     output = await internal[block.name](block.input)
                 else:
                     # A read tool runs through the allowlist and the run's scope; any other name is denied.
-                    output = await tools.call_tool(conn, run_id, read_tools, scope, block.name, block.input)               
+                    output = await mcp_client.call_tool(conn, run_id, read_tools, scope, block.name, block.input)               
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
         messages.append({"role": "user", "content": results})
 
     await remember(conn, run_id)
-    return "Stopped: iteration limit reached."
+    return f"Stopped: the RoE allows {roe['max_model_rounds']} rounds of the model, and they were used."

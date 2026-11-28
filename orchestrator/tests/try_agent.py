@@ -1,11 +1,11 @@
 """A run of the agent against Online Boutique, with the lab's target.yaml and Rules of Engagement."""
 import asyncio
 import os
-import agent
-import db
+from agent import loop
+from storage import db
 
 from pathlib import Path
-import run_config
+import config
 
 # Haiku while developing; CHAOS_MODEL=claude-sonnet-5-5 for the demo runs.
 MODEL = os.environ.get("CHAOS_MODEL", "claude-haiku-5-5")
@@ -15,12 +15,12 @@ TASK = "Find the weaknesses of the application in namespace 'boutique' by runnin
 
 async def main():
     with db.connect() as conn:
-        roe = run_config.load_roe(LAB / "roe.yaml")
-        target = run_config.load_target(LAB / "target.yaml")
+        roe = config.load_roe(LAB / "roe.yaml")
+        target = config.load_target(LAB / "target.yaml")
         run_id = db.create_run(conn, "boutique", MODEL, roe["max_level"], roe, 1, profile=target)
         db.claim_run(conn, run_id)
         try:
-            summary = await agent.run_agent(conn, run_id, MODEL, roe, target, "boutique", TASK)
+            summary = await loop.run_agent(conn, run_id, MODEL, roe, target, "boutique", TASK)
             db.finish_run(conn, run_id, "completed")
         except Exception as exc:
             db.finish_run(conn, run_id, "failed", str(exc))
