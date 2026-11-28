@@ -1,0 +1,24 @@
+# Applied to every stateless Deployment (the target in kustomization.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: any
+spec:
+  template:
+    spec:
+      # One pod per zone. matchLabelKeys adds the pod's own app label to the selector, so one patch
+      # fits every Deployment; the empty labelSelector is what it is added to.
+      topologySpreadConstraints:
+        - topologyKey: topology.kubernetes.io/zone
+          maxSkew: 1
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: {}
+          matchLabelKeys: [app]
+      containers:
+        - name: server
+          # Keeps a terminating pod serving while its endpoint is removed from every node, so callers
+          # stop sending to it before it stops answering. The sleep action needs no shell in the image.
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5

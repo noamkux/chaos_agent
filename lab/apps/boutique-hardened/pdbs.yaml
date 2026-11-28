@@ -1,0 +1,122 @@
+# One PDB per stateless service: a drain or an autoscaler takes at most one pod of each at a time.
+# Labeled so they can be deleted when the lab goes back to lab/apps/boutique.
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: adservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: adservice
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cartservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: cartservice
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: checkoutservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: checkoutservice
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: currencyservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: currencyservice
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: emailservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: emailservice
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: frontend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: paymentservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: paymentservice
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: productcatalogservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: productcatalogservice
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: recommendationservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: recommendationservice
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: shippingservice
+  labels:
+    chaos-lab/hardened: "true"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: shippingservice

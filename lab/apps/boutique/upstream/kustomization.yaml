@@ -1,0 +1,7 @@
+# Lets other overlays use the vendored manifests as a base: kustomize loads files only from inside its
+# own directory, so lab/apps/boutique-hardened reaches upstream through this directory, not the file.
+# The manifests themselves stay unchanged (ADR-0004).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kubernetes-manifests.yaml

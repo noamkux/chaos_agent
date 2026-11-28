@@ -1,0 +1,43 @@
+# The eval's control group (ADR-0032): upstream Online Boutique without the planted weaknesses, hardened
+# the standard way, in the same namespace so the same RoE and target.yaml apply. Expected: mostly
+# withstood. Every broke here is an unknown weakness or a false positive to investigate.
+# Swap with kubectl apply -k, both ways; going back, delete the PDBs (label chaos-lab/hardened).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: boutique
+resources:
+  - namespace.yaml
+  - ../boutique/upstream
+  - pdbs.yaml
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: loadgenerator
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: frontend-external
+  # Every stateless service. redis-cart keeps one replica: its carts live on an emptyDir, and more
+  # replicas would be separate carts, not copies.
+  - path: patches/resilience.yaml
+    target:
+      kind: Deployment
+      name: adservice|cartservice|checkoutservice|currencyservice|emailservice|frontend|paymentservice|productcatalogservice|recommendationservice|shippingservice
+
+# Three replicas, one per zone: losing a zone leaves two.
+replicas:
+  - {name: adservice, count: 3}
+  - {name: cartservice, count: 3}
+  - {name: checkoutservice, count: 3}
+  - {name: currencyservice, count: 3}
+  - {name: emailservice, count: 3}
+  - {name: frontend, count: 3}
+  - {name: paymentservice, count: 3}
+  - {name: productcatalogservice, count: 3}
+  - {name: recommendationservice, count: 3}
+  - {name: shippingservice, count: 3}
