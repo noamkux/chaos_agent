@@ -1,0 +1,44 @@
+{{- /* The dashboard and its datasource, for a Grafana sidecar to load (ADR-0040). */ -}}
+{{- if .Values.grafana.dashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-grafana-dashboard
+  labels:
+    {{- toYaml .Values.grafana.dashboard.labels | nindent 4 }}
+  annotations:
+    grafana_folder: {{ .Values.grafana.dashboard.folder | quote }}
+data:
+  chaos-agent.json: |-
+{{ .Files.Get "files/grafana/chaos-agent.json" | indent 4 }}
+{{- end }}
+{{- if and .Values.grafana.datasource.enabled .Values.postgresql.enabled }}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace (include "chaos-agent.postgresql.secretName" .) }}
+{{- if $secret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-grafana-datasource
+  labels:
+    {{- toYaml .Values.grafana.datasource.labels | nindent 4 }}
+type: Opaque
+stringData:
+  chaos-agent-datasource.yaml: |-
+    apiVersion: 1
+    datasources:
+      # The uid is what every panel of the dashboard names.
+      - name: Chaos Agent
+        uid: chaos-agent-postgres
+        type: grafana-postgresql-datasource
+        url: {{ include "chaos-agent.postgresql.fullname" . }}.{{ .Release.Namespace }}.svc:5432
+        user: {{ .Values.postgresql.auth.username }}
+        editable: false
+        jsonData:
+          database: {{ .Values.postgresql.auth.database }}
+          sslmode: disable
+          postgresVersion: 1700
+        secureJsonData:
+          password: {{ index $secret.data "password" | b64dec | quote }}
+{{- end }}
+{{- end }}

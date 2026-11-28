@@ -28,6 +28,10 @@ weaknesses:
       sets: {spec.template.spec.containers.resources.limits.cpu: "*"}
     impact: {verdict: broke, journeys: [home]}
 
+trivial:
+  - id: T1
+    action: {type: patch, sets: {spec.template.spec.containers.resources.limits.cpu: "<=50m"}}
+
 expected_survivals:
   - id: S1
     action: {type: patch, kind: apps/Deployment, name: ads, sets: {spec.replicas: 0}}

@@ -71,6 +71,7 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | [0034](#adr-0034) | GitHub Actions runs the cheap checks on every change: lint, unit tests, the chart on kind, and the image | Accepted |
 | [0038](#adr-0038) | The model reads what Kubernetes did through inspect_workload, a read-only observe tool passed through as it is, with event messages redacted | Accepted |
 | [0039](#adr-0039) | The orchestrator ships in the chart as a CronJob of runs, with no Kubernetes access, its inputs from a ConfigMap and its API key from the customer's Secret | Accepted |
+| [0040](#adr-0040) | A live Grafana dashboard read straight from Postgres, shipped by the chart for the customer's Grafana sidecar | Accepted |
 
 
 ---
@@ -1288,6 +1289,8 @@ Compare with a baseline (option 2); found is what the summary cites (option 2); 
 **The ground truth (`lab/apps/boutique/ground_truth.yaml`), by action and impact:**
 - **One entry per action and workload,** so recall counts workloads, as the baseline does: the action (`type`, `kind`, `name`, or `zone`), and for a patch `sets`, the dotted paths it must set (`spec.replicas: 0`, list indices ignored, `"*"` for any value and any path under it); a field left out matches any value, and a zone also matches a node of that zone. The impact: the expected verdict on at least one of the entry's journeys. `verified: false` entries are not scored.
 - **Weaknesses:** W1 (zone-a lost); N1 (deleting the only pod of checkoutservice, paymentservice, shippingservice); N6 (a dependency scaled to 0: cartservice, currencyservice, productcatalogservice, shippingservice, checkoutservice), with the slow failure of about 20 s in the same entries, since the same experiments show it; N10, a CPU starvation of frontend the agent found in run 34, until it is verified by hand; N11 (added 2026-11-28), a rollout of productcatalogservice that stalls every journey for about 20 s about half the time, because frontend's gRPC connection is pinned to one of its two pods: found by the agent in runs 32 to 34 and verified without the model in runs 35 and 36, a weakness no manifest shows. A weakness that shows only some of the time needs more than one experiment to confirm, by the agent and by the eval.
+- **Trivial changes** (added 2026-11-28): changes that break any service by design, such as a CPU limit of 50m or less on a service that requests 100m to 300m. An experiment that matches one is counted apart, not as a weakness or an unknown finding: a measure of how many of the agent's experiments taught nothing.
+- **Tested and found** (added 2026-11-28): recall alone hides what was never tried. The score reports, for every weakness, whether any experiment matched its action at all, so "found 4 of 10" reads beside "tested 5 of 10".
 - **Expected survivals:** S1 to S3 (adservice, recommendationservice, emailservice scaled to 0) and S4 (their only pod deleted). A broke on one of them, or one cited as a weakness, is a false positive.
 - **Left out:** configuration findings (PDB, NetworkPolicy, image tag, Redis auth), which are not chaos (ADR-0002); what needs redis-cart down, since it is protected; W4, a configuration weakness whose canary is covered by the unit tests of `inspect_workload`; W2 and W3, which show only under load, while `new_users_per_second` is fixed by `target.yaml` and no action raises it. They come back as entries with Chaos Mesh (StressChaos on the pods).
 
@@ -1641,6 +1644,43 @@ Option 3, option 2 and option 2.
 - `charts/chaos-agent/templates/orchestrator.yaml`, `values.yaml` (`orchestrator`), `ci/all-levels-values.yaml`.
 - `orchestrator/main.py`, `orchestrator/Dockerfile`, `orchestrator/mcp_client.py` (`SERVERS` from env), `orchestrator/config.py` (`max_model_rounds`).
 - `lab/chaos-agent-values.yaml`, `lab/dev.sh` (`load`), `lab/run-agent.sh`.
+
+
+---
+
+<a id="adr-0040"></a>
+
+## ADR-0040: A live Grafana dashboard read straight from Postgres, shipped by the chart for the customer's Grafana sidecar
+
+**Status:** Accepted, 2026-11-28
+**Related:** ADR-0005 (Helm chart), ADR-0006 (Postgres), ADR-0023 (the judge), ADR-0033 (memory), ADR-0039 (the orchestrator in the chart)
+
+### Context
+A run takes 20 to 30 minutes and the only way to follow it was `lab/watch-run.sh` in a terminal. Someone watching a run needs to see what the agent is doing and saying now, what users of the application see, why each verdict was given, what the model costs, whether its memory was used, and to go back to any earlier run. Two questions: where the data comes from, and how a customer gets the dashboard.
+
+### Options
+**Where the data comes from:**
+1. **Metrics in Prometheus:** the orchestrator and k6 export them. Live to the second, but everything the dashboard needs is already in Postgres, and text (the agent's words, hypotheses, timelines) is not a metric.
+2. **Postgres as a Grafana datasource:** every step, every model response, every k6 measurement and every verdict is already a row (ADR-0006). Nothing new to export, and history is the same query on another run.
+
+**How a customer gets it:**
+1. **The chart runs its own Grafana.** One more component to secure and log in to, beside the one the customer has.
+2. **The chart ships the dashboard and the datasource as objects the Grafana chart's sidecar loads** (`grafana_dashboard` and `grafana_datasource` labels): the customer's own Grafana shows it.
+
+### Decision
+Postgres as the datasource; the chart ships both objects, off by default (`grafana.dashboard.enabled`, `grafana.datasource.enabled`).
+- **The dashboard** (`files/grafana/chaos-agent.json`) has a run variable, newest first, and rows for: the run (status, experiments by verdict, cost, cache hit share, denied calls, pending undos); now (the last step and the current experiment with its hypothesis); what the agent says and does (every text block and tool call of every model response, and every tool call of the orchestrator); what users saw (per second and journey: p95, failed and successful users, errors by type, with every experiment as an annotation and a panel that explains how to read them); experiments and verdicts (one row per journey with the timeline, bad seconds, the longest run of them and the noise rate the judge expected); the model (tokens per call split into new input, cache reads and cache writes, cost so far, memory searches and what they found); and across runs (every run with its numbers, a click opens it on its own time range, verdicts and cost per run).
+- **The datasource is a Secret,** since it holds the Postgres password, read with `lookup` from the chart's Postgres Secret: a new release gets it on its second `helm upgrade`.
+- **The lab** installs Grafana from the Grafana community chart with both sidecars watching `chaos-system`, on the control-plane like Prometheus.
+
+### Consequences
+- **Gains:** a run can be followed live and any earlier run opened, from data that already exists; the customer keeps one Grafana.
+- **Trade-offs:** a k6 measurement is stored when it ends, so the newest experiment's seconds appear once it is measured, not second by second (live points would need k6 to remote write to Prometheus, which the lab already accepts). The datasource uses the chart's Postgres user, which can write; a read-only role for Grafana is in the backlog. Model prices are in the dashboard's queries, as in `eval/score.py`. Recall against the ground truth is not in the database, so it is in `eval/results.md`, not on the dashboard.
+
+### In the code
+- `charts/chaos-agent/files/grafana/chaos-agent.json`: the dashboard.
+- `charts/chaos-agent/templates/grafana.yaml`: the dashboard ConfigMap and the datasource Secret; `grafana` in `charts/chaos-agent/values.yaml`.
+- `lab/grafana-values.yaml`, `lab/up.sh` (4b): Grafana in the lab; `grafana` in `lab/chaos-agent-values.yaml`.
 
 
 ---

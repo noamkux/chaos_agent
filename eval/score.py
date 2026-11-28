@@ -64,16 +64,44 @@ def flatten(value, prefix=""):
     return [(prefix, value)]
 
 
+QUANTITY_SUFFIXES = {"m": 0.001, "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "K": 1e3, "M": 1e6, "G": 1e9}
+
+
+def quantity(value):
+    """A Kubernetes quantity as a number: 20m is 0.02, 64Mi is 67108864. None if it is not one."""
+    text = str(value)
+    for suffix, factor in sorted(QUANTITY_SUFFIXES.items(), key=lambda item: -len(item[0])):
+        if text.endswith(suffix):
+            text, scale = text[: -len(suffix)], factor
+            break
+    else:
+        scale = 1
+    try:
+        return float(text) * scale
+    except ValueError:
+        return None
+
+
+def value_matches(wanted, value):
+    """Whether a patch's value is what an entry wants: equal, any ("*"), or at most a quantity ("<=20m")."""
+    if wanted == "*":
+        return True
+    if isinstance(wanted, str) and wanted.startswith("<="):
+        limit, actual = quantity(wanted[2:]), quantity(value)
+        return limit is not None and actual is not None and actual <= limit
+    return value == wanted
+
+
 def action_matches(expected, action, zone_of):
     """Whether an experiment's action is the entry's action: every field the entry gives must be equal,
-    sets must be set by the patch ("*" for any value, or for any path under it), and a zone also matches
-    a single node of that zone."""
+    sets must be set by the patch ("*" for any value, or for any path under it, "<=20m" for a quantity at
+    most that), and a zone also matches a single node of that zone."""
     for field, value in expected.items():
         if field == "sets":
             leaves = flatten(action.get("patch") or {})
             for path, wanted in value.items():
                 # "*" matches any value, and anything under the path: annotations: "*" is any annotation.
-                if not any((p == path and (wanted == "*" or v == wanted))
+                if not any((p == path and value_matches(wanted, v))
                            or (wanted == "*" and p.startswith(path + ".")) for p, v in leaves):
                     return False
         elif field == "zone" and action.get("zone") is None and action.get("node"):
@@ -248,6 +276,7 @@ def score_run(run, rows, pending_undos, truth, known_before):
     weaknesses = [e for e in truth["weaknesses"] if e.get("verified", True)]
     unverified = [e for e in truth["weaknesses"] if not e.get("verified", True)]
     survivals = truth.get("expected_survivals") or []
+    trivial = truth.get("trivial") or []
     summary = summary_of(rows)
     cited = cited_steps(summary, run["id"]) if summary is not None else set()
 
@@ -256,8 +285,11 @@ def score_run(run, rows, pending_undos, truth, known_before):
                 and impact(e, experiment) == "broke"]
 
     found_broke, found_cited, false_broke, false_cited, unknown, unverified_hits = set(), set(), set(), set(), [], set()
+    tested, trivial_steps = set(), []
     repeats = 0
     for experiment in experiments:
+        if experiment["verdict"] in ("broke", "withstood"):
+            tested.update(e["id"] for e in weaknesses if action_matches(e["action"], experiment["action"], zone_of))
         weak = showing(weaknesses, experiment)
         false = showing(survivals, experiment)
         is_cited = experiment["step"] in cited
@@ -269,7 +301,12 @@ def score_run(run, rows, pending_undos, truth, known_before):
         if is_cited and any(action_matches(e["action"], experiment["action"], zone_of) for e in survivals):
             false_cited.update(e["id"] for e in survivals
                                if action_matches(e["action"], experiment["action"], zone_of))
-        if experiment["verdict"] == "broke" and not weak and not false and not showing(unverified, experiment):
+        # A change that breaks any service by design is not an unknown finding; a weakness it shows still counts.
+        is_trivial = any(action_matches(t["action"], experiment["action"], zone_of) for t in trivial)
+        if is_trivial and not weak:
+            trivial_steps.append(experiment["step"])
+        if experiment["verdict"] == "broke" and not weak and not false and not is_trivial \
+                and not showing(unverified, experiment):
             unknown.append({"step": experiment["step"], "action": experiment["action"], "cited": is_cited,
                             "journeys": sorted(experiment["broken"])})
         if any(e["id"] in known_before and action_matches(e["action"], experiment["action"], zone_of)
@@ -281,6 +318,8 @@ def score_run(run, rows, pending_undos, truth, known_before):
     return {
         "run": run["id"], "model": run["model"], "status": run["status"],
         "weaknesses": len(weaknesses),
+        "tested": sorted(tested),
+        "trivial": trivial_steps,
         "found_cited": sorted(found_cited) if summary is not None else None,
         "found_broke": sorted(found_broke),
         "false_cited": sorted(false_cited) if summary is not None else None,
@@ -326,9 +365,11 @@ def render(scores):
     rows = [
         ("Model", lambda s: s["model"]),
         ("Status", lambda s: s["status"]),
+        ("Weaknesses tested at all", lambda s: f"{len(s['tested'])}/{s['weaknesses']}"),
         ("Recall, cited in the summary", lambda s: recall(s["found_cited"], s["weaknesses"])),
         ("Recall, experiments that broke", lambda s: recall(s["found_broke"], s["weaknesses"])),
         ("Unknown findings (to review)", lambda s: str(len(s["unknown"]))),
+        ("Trivial experiments (break by design)", lambda s: str(len(s["trivial"]))),
         ("False positives, cited", lambda s: "n/a" if s["false_cited"] is None else str(len(s["false_cited"]))),
         ("False positives, broke", lambda s: str(len(s["false_broke"]))),
         ("Experiments", lambda s: str(s["experiments"])),
@@ -349,10 +390,12 @@ def render(scores):
     lines += [f"| {name} | " + " | ".join(value(s) for s in scores) + " |" for name, value in rows]
     for s in scores:
         lines += ["", f"### Run {s['run']}", "",
+                  f"- Tested: {ids(s['tested'])}",
                   f"- Found, cited: {ids(s['found_cited'])}",
                   f"- Found, broke: {ids(s['found_broke'])}",
                   f"- False positives: cited {ids(s['false_cited'])}; broke {ids(s['false_broke'])}",
-                  f"- Unverified entries shown: {ids(s['unverified'])}"]
+                  f"- Unverified entries shown: {ids(s['unverified'])}",
+                  f"- Trivial experiments: {', '.join(f'step {n}' for n in s['trivial']) or 'none'}"]
         for u in s["unknown"]:
             lines.append(f"- Unknown, step {u['step']}{' (cited)' if u['cited'] else ''}: "
                          f"{describe(u['action'])}, broke {', '.join(u['journeys'])}")

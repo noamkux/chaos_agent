@@ -1,0 +1,35 @@
+# Grafana for the lab, as a customer's existing Grafana: it loads the chaos-agent chart's dashboard and
+# datasource from chaos-system through its sidecars. On the control-plane like Prometheus, out of reach
+# of node failures.
+persistence:
+  enabled: false
+
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    labelValue: "1"
+    searchNamespace: chaos-system
+    # The chart's grafana_folder annotation puts the dashboard in its folder.
+    folderAnnotation: grafana_folder
+    provider:
+      foldersFromFilesStructure: true
+  datasources:
+    enabled: true
+    label: grafana_datasource
+    labelValue: "1"
+    searchNamespace: chaos-system
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule

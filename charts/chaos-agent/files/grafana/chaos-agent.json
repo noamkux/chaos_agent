@@ -1,0 +1,1755 @@
+{
+ "uid": "chaos-agent",
+ "title": "Chaos Agent",
+ "tags": [
+  "chaos-agent"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "version": 1,
+ "editable": true,
+ "graphTooltip": 1,
+ "refresh": "10s",
+ "time": {
+  "from": "now-1h",
+  "to": "now"
+ },
+ "description": "One run of the Chaos Agent at a time: what it does now, what the agent says, what users saw, the verdicts, the model's tokens and memory; and every run before it.",
+ "templating": {
+  "list": [
+   {
+    "name": "run",
+    "label": "Run",
+    "type": "query",
+    "datasource": {
+     "type": "grafana-postgresql-datasource",
+     "uid": "chaos-agent-postgres"
+    },
+    "refresh": 2,
+    "sort": 0,
+    "query": "SELECT id AS __value, '#' || id || '  ' || model || '  ' || status || '  ' || to_char(created_at, 'MM-DD HH24:MI') AS __text FROM runs ORDER BY id DESC",
+    "definition": "runs, newest first",
+    "includeAll": false,
+    "multi": false
+   }
+  ]
+ },
+ "annotations": {
+  "list": [
+   {
+    "builtIn": 1,
+    "datasource": {
+     "type": "grafana",
+     "uid": "-- Grafana --"
+    },
+    "enable": true,
+    "hide": true,
+    "iconColor": "rgba(0, 211, 255, 1)",
+    "name": "Annotations & Alerts",
+    "type": "dashboard"
+   },
+   {
+    "name": "Experiments",
+    "enable": true,
+    "iconColor": "purple",
+    "datasource": {
+     "type": "grafana-postgresql-datasource",
+     "uid": "chaos-agent-postgres"
+    },
+    "target": {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT extract(epoch FROM s.started_at) * 1000 AS time, extract(epoch FROM coalesce(s.finished_at, now())) * 1000 AS timeend,\n       'step ' || s.step || ': ' || (s.input->'action'->>'type') || ' ' || coalesce(s.input->'action'->>'name', s.input->'action'->>'zone', s.input->'action'->>'node', '') || ' (' || coalesce(s.output->>'verdict', 'running') || ')' AS text,\n       coalesce(s.output->>'verdict', 'running') AS tags\nFROM steps s WHERE s.run_id = $run AND s.name = 'run_experiment' AND s.allowed",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "The run",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Status",
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 3,
+    "h": 4
+   },
+   "description": "",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT status FROM runs WHERE id = $run",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "none",
+    "textMode": "value",
+    "justifyMode": "center"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "running": {
+         "color": "blue",
+         "index": 0
+        },
+        "completed": {
+         "color": "green",
+         "index": 1
+        },
+        "aborted": {
+         "color": "orange",
+         "index": 2
+        },
+        "failed": {
+         "color": "red",
+         "index": 3
+        },
+        "queued": {
+         "color": "text",
+         "index": 4
+        }
+       }
+      }
+     ]
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Model",
+   "gridPos": {
+    "x": 3,
+    "y": 1,
+    "w": 4,
+    "h": 4
+   },
+   "description": "",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT model FROM runs WHERE id = $run",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value",
+    "justifyMode": "center"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Minutes",
+   "gridPos": {
+    "x": 7,
+    "y": 1,
+    "w": 2,
+    "h": 4
+   },
+   "description": "",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT round((extract(epoch FROM coalesce(finished_at, now()) - started_at) / 60)::numeric, 1) AS minutes FROM runs WHERE id = $run",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "none",
+    "graphMode": "none",
+    "textMode": "value",
+    "justifyMode": "center"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 5,
+   "type": "stat",
+   "title": "Experiments",
+   "gridPos": {
+    "x": 9,
+    "y": 1,
+    "w": 7,
+    "h": 4
+   },
+   "description": "Every run_experiment of the run by the judge's verdict. not_run: the system never got steady, nothing was changed.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT count(*) FILTER (WHERE output->>'verdict' IN ('broke','withstood','inconclusive')) AS experiments,\n       count(*) FILTER (WHERE output->>'verdict' = 'broke') AS broke,\n       count(*) FILTER (WHERE output->>'verdict' = 'withstood') AS withstood,\n       count(*) FILTER (WHERE output->>'verdict' = 'inconclusive') AS inconclusive,\n       count(*) FILTER (WHERE output->>'verdict' = 'not_run') AS not_run\nFROM steps WHERE run_id = $run AND name = 'run_experiment'",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "none",
+    "textMode": "value_and_name",
+    "justifyMode": "center"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "broke"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "withstood"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "green"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "inconclusive"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "orange"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 6,
+   "type": "stat",
+   "title": "Model use",
+   "gridPos": {
+    "x": 16,
+    "y": 1,
+    "w": 5,
+    "h": 4
+   },
+   "description": "cost_usd from the tokens of every model call (prices as in eval/score.py). cache_hit_pct: the share of input tokens read from the prompt cache.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT count(*) AS rounds, round(sum((CASE s.name\n  WHEN 'claude-haiku-5-5' THEN (coalesce(s.tokens_in,0)*0.10 + coalesce(s.tokens_out,0)*0.50\n       + coalesce(s.cache_read_tokens,0)*0.01 + coalesce(s.cache_write_tokens,0)*0.125)\n       * CASE WHEN coalesce(s.tokens_in,0)+coalesce(s.cache_read_tokens,0)+coalesce(s.cache_write_tokens,0) > 100000 THEN 5 ELSE 1 END\n  WHEN 'claude-sonnet-5-5' THEN coalesce(s.tokens_in,0)*2.0 + coalesce(s.tokens_out,0)*10.0\n       + coalesce(s.cache_read_tokens,0)*0.10 + coalesce(s.cache_write_tokens,0)*2.50\n  END) / 1000000.0)::numeric, 3) AS cost_usd, round(100.0 * sum(s.cache_read_tokens) / nullif(sum(coalesce(s.tokens_in,0) + coalesce(s.cache_read_tokens,0) + coalesce(s.cache_write_tokens,0)), 0), 1) AS cache_hit_pct\nFROM steps s WHERE s.run_id = $run AND s.kind = 'llm'",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "none",
+    "textMode": "value_and_name",
+    "justifyMode": "center"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 7,
+   "type": "stat",
+   "title": "Safety",
+   "gridPos": {
+    "x": 21,
+    "y": 1,
+    "w": 3,
+    "h": 4
+   },
+   "description": "denied: calls the orchestrator refused (RoE, scope, unknown tools). pending_undos: changes not restored yet; must be 0 when no experiment runs.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT (SELECT count(*) FROM steps WHERE run_id = $run AND NOT allowed AND name <> 'read_tools_missing') AS denied,\n       (SELECT count(*) FROM undo_actions WHERE run_id = $run AND status = 'pending') AS pending_undos",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "none",
+    "textMode": "value_and_name",
+    "justifyMode": "center"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 8,
+   "type": "row",
+   "title": "Now",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 5,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 9,
+   "type": "table",
+   "title": "Last step",
+   "gridPos": {
+    "x": 0,
+    "y": 6,
+    "w": 8,
+    "h": 5
+   },
+   "description": "What the orchestrator is doing right now: the last step recorded. A model call shows as the model's name.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT s.step, s.name AS doing,\n       CASE WHEN s.finished_at IS NULL THEN 'running for ' || round(extract(epoch FROM now() - s.started_at)) || ' s'\n            ELSE 'done' END AS state, s.started_at AS started\nFROM steps s WHERE s.run_id = $run ORDER BY s.step DESC LIMIT 1",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 10,
+   "type": "table",
+   "title": "Current experiment",
+   "gridPos": {
+    "x": 8,
+    "y": 6,
+    "w": 16,
+    "h": 5
+   },
+   "description": "The last experiment the agent asked for, with its hypothesis. verdict is running until the orchestrator has measured, restored and judged it.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT s.step, (s.input->'action'->>'type') || ' ' || coalesce(s.input->'action'->>'name', s.input->'action'->>'zone', s.input->'action'->>'node', '') AS action, coalesce((s.input->'action'->'patch')::text, '') AS patch,\n       s.input->'journeys' AS journeys, s.input->>'restore_after_s' AS restore_after_s,\n       coalesce(s.output->>'verdict', 'running') AS verdict, s.input->>'hypothesis' AS hypothesis\nFROM steps s WHERE s.run_id = $run AND s.name = 'run_experiment' ORDER BY s.step DESC LIMIT 1",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "cellOptions": {
+       "type": "auto",
+       "wrapText": true
+      },
+      "inspect": true
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "verdict"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "value",
+          "options": {
+           "broke": {
+            "color": "red",
+            "index": 0
+           },
+           "withstood": {
+            "color": "green",
+            "index": 1
+           },
+           "inconclusive": {
+            "color": "orange",
+            "index": 2
+           },
+           "not_run": {
+            "color": "text",
+            "index": 3
+           },
+           "running": {
+            "color": "blue",
+            "index": 4
+           }
+          }
+         }
+        ]
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "step"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 60
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "verdict"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 100
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 11,
+   "type": "row",
+   "title": "What the agent says and does",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 11,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 12,
+   "type": "table",
+   "title": "Agent",
+   "gridPos": {
+    "x": 0,
+    "y": 12,
+    "w": 24,
+    "h": 12
+   },
+   "description": "Every model response of the run, newest first: its text, and each tool it called with the input. The last text of a finished run is its summary.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT s.step, s.finished_at AS time,\n       CASE e.b->>'type'\n         WHEN 'text' THEN e.b->>'text'\n         WHEN 'thinking' THEN '(thinking) ' || (e.b->>'thinking')\n         WHEN 'tool_use' THEN 'calls ' || (e.b->>'name') || ' ' || (e.b->'input')::text\n       END AS agent\nFROM steps s\nCROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.output) = 'array' THEN s.output ELSE '[]'::jsonb END)\n     WITH ORDINALITY AS e(b, i)\nWHERE s.run_id = $run AND s.kind = 'llm' AND e.b->>'type' IN ('text', 'thinking', 'tool_use')\nORDER BY s.step DESC, e.i",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "cellOptions": {
+       "type": "auto",
+       "wrapText": true
+      },
+      "inspect": true
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "step"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 60
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "time"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 170
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 13,
+   "type": "table",
+   "title": "Tool calls",
+   "gridPos": {
+    "x": 0,
+    "y": 24,
+    "w": 24,
+    "h": 8
+   },
+   "description": "Every call the orchestrator made for the run, through the MCP servers or its own tools, newest first. allowed false: refused before it left the orchestrator. Output is cut at 400 characters; inspect a cell for all of it.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT s.step, s.name AS tool, s.allowed, s.started_at AS started,\n       round(extract(epoch FROM s.finished_at - s.started_at)::numeric, 1) AS seconds,\n       left(coalesce(s.output::text, 'running'), 400) AS output\nFROM steps s WHERE s.run_id = $run AND s.kind = 'tool' ORDER BY s.step DESC",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "cellOptions": {
+       "type": "auto",
+       "wrapText": true
+      },
+      "inspect": true
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "step"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 60
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "allowed"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 70
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "seconds"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 70
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "allowed"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "value",
+          "options": {
+           "true": {
+            "color": "green",
+            "index": 0
+           },
+           "false": {
+            "color": "red",
+            "index": 1
+           }
+          }
+         }
+        ]
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 14,
+   "type": "row",
+   "title": "What users saw: the k6 measurements",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 32,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 15,
+   "type": "text",
+   "title": "How to read the measurements",
+   "gridPos": {
+    "x": 0,
+    "y": 33,
+    "w": 6,
+    "h": 16
+   },
+   "description": "",
+   "options": {
+    "mode": "markdown",
+    "content": "\nEvery point is **one second**, by the second the users **arrived**, for one journey.\n\nk6 sends `new_users_per_second` new users per journey every second, whatever the system does, from inside the probe pod. Each measurement is a steady check (before every experiment) or an experiment's own measurement; the vertical marks are the experiments, from the agent's request until the verdict.\n\n- **p95**: the slowest requests of that second. Above the steady state's `p95_ms` (`target.yaml`) the second is **slow** (`s` in the timeline).\n- **Failed users**: users whose journey failed, by an HTTP error or no answer in time. A failed second is `x`.\n- **The judge** does not count bad seconds one by one: it learns the application's own noise from the seconds before every action, and calls an experiment **broke** only when the seconds after the action are worse than that noise would make (ADR-0036). `noise_rate` in the experiments table is what it expected.\n\nA measurement is stored when k6 finishes it, so the newest experiment's seconds appear once it is measured."
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 16,
+   "type": "timeseries",
+   "title": "p95 latency per journey (ms)",
+   "gridPos": {
+    "x": 6,
+    "y": 33,
+    "w": 18,
+    "h": 8
+   },
+   "description": "The red line is the steady state of the lab's target.yaml (500 ms); change the threshold for another application.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT to_timestamp((s.output->'content'->>'started_at')::float8 + (sec->>'second')::int) AS time, j.key AS metric, (j.value->>'p95_ms')::float8 AS value \nFROM steps s\nCROSS JOIN LATERAL jsonb_array_elements(s.output->'content'->'seconds') sec\nCROSS JOIN LATERAL jsonb_each(sec->'journeys') j\nWHERE s.run_id = $run AND s.name LIKE '%measure_journeys' AND coalesce((s.output->>'is_error')::boolean, false) = false\n  AND jsonb_typeof(s.output->'content'->'seconds') = 'array' ORDER BY 1",
+     "format": "time_series",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ms",
+     "custom": {
+      "drawStyle": "points",
+      "pointSize": 4,
+      "showPoints": "always",
+      "spanNulls": false,
+      "thresholdsStyle": {
+       "mode": "line"
+      }
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "transparent",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 500
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 17,
+   "type": "timeseries",
+   "title": "Failed users per second, per journey",
+   "gridPos": {
+    "x": 6,
+    "y": 41,
+    "w": 18,
+    "h": 8
+   },
+   "description": "",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT to_timestamp((s.output->'content'->>'started_at')::float8 + (sec->>'second')::int) AS time, j.key AS metric, (j.value->>'failed')::int AS value \nFROM steps s\nCROSS JOIN LATERAL jsonb_array_elements(s.output->'content'->'seconds') sec\nCROSS JOIN LATERAL jsonb_each(sec->'journeys') j\nWHERE s.run_id = $run AND s.name LIKE '%measure_journeys' AND coalesce((s.output->>'is_error')::boolean, false) = false\n  AND jsonb_typeof(s.output->'content'->'seconds') = 'array' ORDER BY 1",
+     "format": "time_series",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60,
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "color": {
+      "mode": "palette-classic"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 18,
+   "type": "table",
+   "title": "Errors by type",
+   "gridPos": {
+    "x": 0,
+    "y": 49,
+    "w": 8,
+    "h": 7
+   },
+   "description": "How the failed users failed over the whole run: an HTTP status (fast errors) or timeout (no answer in fail_request_after_s).",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT j.key AS journey, e.key AS error, sum((e.value)::int) AS users\nFROM steps s\nCROSS JOIN LATERAL jsonb_array_elements(s.output->'content'->'seconds') sec\nCROSS JOIN LATERAL jsonb_each(sec->'journeys') j\nCROSS JOIN LATERAL jsonb_each(coalesce(j.value->'errors', '{}'::jsonb)) e\nWHERE s.run_id = $run AND s.name LIKE '%measure_journeys' AND jsonb_typeof(s.output->'content'->'seconds') = 'array'\nGROUP BY 1, 2 ORDER BY 3 DESC",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   }
+  },
+  {
+   "id": 19,
+   "type": "timeseries",
+   "title": "Successful users per second, per journey",
+   "gridPos": {
+    "x": 8,
+    "y": 49,
+    "w": 16,
+    "h": 7
+   },
+   "description": "",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT to_timestamp((s.output->'content'->>'started_at')::float8 + (sec->>'second')::int) AS time, j.key AS metric, (j.value->>'ok')::int AS value \nFROM steps s\nCROSS JOIN LATERAL jsonb_array_elements(s.output->'content'->'seconds') sec\nCROSS JOIN LATERAL jsonb_each(sec->'journeys') j\nWHERE s.run_id = $run AND s.name LIKE '%measure_journeys' AND coalesce((s.output->>'is_error')::boolean, false) = false\n  AND jsonb_typeof(s.output->'content'->'seconds') = 'array' ORDER BY 1",
+     "format": "time_series",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineInterpolation": "stepAfter",
+      "fillOpacity": 10
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 20,
+   "type": "row",
+   "title": "Experiments and verdicts",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 56,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 21,
+   "type": "table",
+   "title": "Experiments",
+   "gridPos": {
+    "x": 0,
+    "y": 57,
+    "w": 24,
+    "h": 12
+   },
+   "description": "One row per journey of every experiment. timeline: one character per second, . ok, s slow, x failed, _ no users, | the action and the restore. bad_s: bad seconds after the action; in_a_row: the longest run of them; noise_rate: the share of bad seconds the judge expected from the application's own noise.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT s.step, (s.input->'action'->>'type') || ' ' || coalesce(s.input->'action'->>'name', s.input->'action'->>'zone', s.input->'action'->>'node', '') AS action, coalesce((s.input->'action'->'patch')::text, '') AS patch,\n       coalesce(s.output->>'verdict', 'running') AS verdict, j.key AS journey, j.value->>'timeline' AS timeline,\n       (j.value->>'broken_s')::int AS bad_s, (j.value->>'longest_broken_s')::int AS in_a_row,\n       j.value->>'recovered_after_s' AS recovered_after_s, j.value->>'noise_rate' AS noise_rate,\n       (j.value->'after_action'->'errors')::text AS errors,\n       coalesce(s.output->>'reason', s.output->>'error', '') AS reason, s.input->>'hypothesis' AS hypothesis\nFROM steps s\nLEFT JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(s.output->'journeys') = 'object' THEN s.output->'journeys' ELSE '{}'::jsonb END) j ON true\nWHERE s.run_id = $run AND s.name = 'run_experiment'\nORDER BY s.step DESC, j.key",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "cellOptions": {
+       "type": "auto",
+       "wrapText": true
+      },
+      "inspect": true
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "verdict"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "value",
+          "options": {
+           "broke": {
+            "color": "red",
+            "index": 0
+           },
+           "withstood": {
+            "color": "green",
+            "index": 1
+           },
+           "inconclusive": {
+            "color": "orange",
+            "index": 2
+           },
+           "not_run": {
+            "color": "text",
+            "index": 3
+           },
+           "running": {
+            "color": "blue",
+            "index": 4
+           }
+          }
+         }
+        ]
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "step"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 60
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "verdict"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 100
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "journey"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 80
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "bad_s"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 60
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "in_a_row"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 70
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "noise_rate"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 80
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "timeline"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 420
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "auto",
+         "wrapText": true
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 22,
+   "type": "row",
+   "title": "The model: tokens, caching and memory",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 69,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 23,
+   "type": "timeseries",
+   "title": "Tokens per model call",
+   "gridPos": {
+    "x": 0,
+    "y": 70,
+    "w": 12,
+    "h": 8
+   },
+   "description": "Every model call of the run. The prompt cache keeps the system prompt and the conversation so far: what is read from it costs a tenth of new input, so most of every call's input should be 'read from cache' once the run is going.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT s.finished_at AS time, s.tokens_in AS \"input, not cached\", s.cache_read_tokens AS \"read from cache\",\n       s.cache_write_tokens AS \"written to cache\", s.tokens_out AS output\nFROM steps s WHERE s.run_id = $run AND s.kind = 'llm' ORDER BY 1",
+     "format": "time_series",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 24,
+   "type": "timeseries",
+   "title": "Cost so far (USD)",
+   "gridPos": {
+    "x": 12,
+    "y": 70,
+    "w": 6,
+    "h": 8
+   },
+   "description": "",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT s.finished_at AS time, sum((CASE s.name\n  WHEN 'claude-haiku-5-5' THEN (coalesce(s.tokens_in,0)*0.10 + coalesce(s.tokens_out,0)*0.50\n       + coalesce(s.cache_read_tokens,0)*0.01 + coalesce(s.cache_write_tokens,0)*0.125)\n       * CASE WHEN coalesce(s.tokens_in,0)+coalesce(s.cache_read_tokens,0)+coalesce(s.cache_write_tokens,0) > 100000 THEN 5 ELSE 1 END\n  WHEN 'claude-sonnet-5-5' THEN coalesce(s.tokens_in,0)*2.0 + coalesce(s.tokens_out,0)*10.0\n       + coalesce(s.cache_read_tokens,0)*0.10 + coalesce(s.cache_write_tokens,0)*2.50\n  END) / 1000000.0) OVER (ORDER BY s.step) AS cost_usd\nFROM steps s WHERE s.run_id = $run AND s.kind = 'llm' ORDER BY 1",
+     "format": "time_series",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 3,
+     "custom": {
+      "lineInterpolation": "stepAfter",
+      "fillOpacity": 15
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 25,
+   "type": "stat",
+   "title": "Memory",
+   "gridPos": {
+    "x": 18,
+    "y": 70,
+    "w": 6,
+    "h": 8
+   },
+   "description": "searches: how often the agent searched what earlier runs found (search_knowledge). remembered_at_the_end: chunks this run added to memory when it finished. chunks_in_memory: all that later runs on this application can search.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT (SELECT count(*) FROM steps WHERE run_id = $run AND name = 'search_knowledge') AS searches,\n       (SELECT coalesce(sum((output->>'added')::int), 0) FROM steps WHERE run_id = $run AND name = 'index_knowledge') AS remembered_at_the_end,\n       (SELECT count(*) FROM knowledge_chunks WHERE namespace = (SELECT namespace FROM runs WHERE id = $run)) AS chunks_in_memory",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "none",
+    "textMode": "value_and_name",
+    "justifyMode": "center"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "fixed",
+      "fixedColor": "text"
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 26,
+   "type": "table",
+   "title": "What the agent searched in memory",
+   "gridPos": {
+    "x": 0,
+    "y": 78,
+    "w": 24,
+    "h": 8
+   },
+   "description": "Retrieval (ADR-0033): every search_knowledge call, with what it found. closest is the distance in meaning of the best result (lower is closer). experiment results are facts from measurements; summary results are an earlier agent's conclusions.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT s.step, s.started_at AS time, s.input->>'query' AS query, coalesce(s.input->>'workload', '') AS workload,\n       jsonb_array_length(coalesce(s.output->'results', '[]'::jsonb)) AS results,\n       (SELECT round(min((r->>'distance')::numeric), 3) FROM jsonb_array_elements(coalesce(s.output->'results', '[]'::jsonb)) r) AS closest,\n       (SELECT string_agg('run ' || (r->>'run_id') || coalesce(' step ' || (r->>'step'), '') || ' (' || (r->>'kind') || ')', ', ')\n        FROM jsonb_array_elements(coalesce(s.output->'results', '[]'::jsonb)) r) AS found,\n       coalesce(s.output->>'error', '') AS error\nFROM steps s WHERE s.run_id = $run AND s.name = 'search_knowledge' ORDER BY s.step DESC",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "cellOptions": {
+       "type": "auto",
+       "wrapText": true
+      },
+      "inspect": true
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "step"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 60
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "results"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 70
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "closest"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 70
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 27,
+   "type": "row",
+   "title": "Across runs: history and improvement",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 86,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 28,
+   "type": "table",
+   "title": "Runs (click a run to open it)",
+   "gridPos": {
+    "x": 0,
+    "y": 87,
+    "w": 24,
+    "h": 10
+   },
+   "description": "Every run, newest first. Click a run number to open it on its own time range. Runs without a model (baseline, verify) have no rounds or cost. Recall against the ground truth is scored by eval/score.py, not here.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "WITH e AS (SELECT run_id,\n                  count(*) FILTER (WHERE output->>'verdict' IN ('broke','withstood','inconclusive')) AS experiments,\n                  count(*) FILTER (WHERE output->>'verdict' = 'broke') AS broke,\n                  count(*) FILTER (WHERE output->>'verdict' = 'withstood') AS withstood,\n                  count(*) FILTER (WHERE output->>'verdict' = 'inconclusive') AS inconclusive\n           FROM steps WHERE name = 'run_experiment' GROUP BY run_id),\n     l AS (SELECT s.run_id, count(*) AS rounds, sum((CASE s.name\n  WHEN 'claude-haiku-5-5' THEN (coalesce(s.tokens_in,0)*0.10 + coalesce(s.tokens_out,0)*0.50\n       + coalesce(s.cache_read_tokens,0)*0.01 + coalesce(s.cache_write_tokens,0)*0.125)\n       * CASE WHEN coalesce(s.tokens_in,0)+coalesce(s.cache_read_tokens,0)+coalesce(s.cache_write_tokens,0) > 100000 THEN 5 ELSE 1 END\n  WHEN 'claude-sonnet-5-5' THEN coalesce(s.tokens_in,0)*2.0 + coalesce(s.tokens_out,0)*10.0\n       + coalesce(s.cache_read_tokens,0)*0.10 + coalesce(s.cache_write_tokens,0)*2.50\n  END) / 1000000.0) AS cost, round(100.0 * sum(s.cache_read_tokens) / nullif(sum(coalesce(s.tokens_in,0) + coalesce(s.cache_read_tokens,0) + coalesce(s.cache_write_tokens,0)), 0), 1) AS cache_hit_pct\n           FROM steps s WHERE s.kind = 'llm' GROUP BY s.run_id),\n     k AS (SELECT run_id, count(*) AS searches FROM steps WHERE name = 'search_knowledge' GROUP BY run_id)\nSELECT r.id AS run, r.model, r.status, r.namespace, r.started_at AS started,\n       round((extract(epoch FROM coalesce(r.finished_at, now()) - r.started_at) / 60)::numeric, 1) AS minutes,\n       coalesce(e.experiments, 0) AS experiments, coalesce(e.broke, 0) AS broke, coalesce(e.withstood, 0) AS withstood,\n       coalesce(e.inconclusive, 0) AS inconclusive, coalesce(k.searches, 0) AS memory_searches,\n       coalesce(l.rounds, 0) AS rounds, round(coalesce(l.cost, 0)::numeric, 3) AS cost_usd, l.cache_hit_pct,\n       (extract(epoch FROM r.started_at) * 1000)::bigint AS from_ms,\n       (extract(epoch FROM coalesce(r.finished_at, now())) * 1000 + 60000)::bigint AS to_ms\nFROM runs r LEFT JOIN e ON e.run_id = r.id LEFT JOIN l ON l.run_id = r.id LEFT JOIN k ON k.run_id = r.id\nORDER BY r.id DESC",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {},
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "from_ms"
+      },
+      "properties": [
+       {
+        "id": "custom.hidden",
+        "value": true
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "to_ms"
+      },
+      "properties": [
+       {
+        "id": "custom.hidden",
+        "value": true
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "status"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "value",
+          "options": {
+           "running": {
+            "color": "blue",
+            "index": 0
+           },
+           "completed": {
+            "color": "green",
+            "index": 1
+           },
+           "aborted": {
+            "color": "orange",
+            "index": 2
+           },
+           "failed": {
+            "color": "red",
+            "index": 3
+           },
+           "queued": {
+            "color": "text",
+            "index": 4
+           }
+          }
+         }
+        ]
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "run"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 60
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "run"
+      },
+      "properties": [
+       {
+        "id": "links",
+        "value": [
+         {
+          "title": "Open run ${__data.fields.run}",
+          "url": "/d/chaos-agent/chaos-agent?var-run=${__data.fields.run}&from=${__data.fields.from_ms}&to=${__data.fields.to_ms}"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 29,
+   "type": "barchart",
+   "title": "Verdicts per run",
+   "gridPos": {
+    "x": 0,
+    "y": 97,
+    "w": 12,
+    "h": 8
+   },
+   "description": "",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT '#' || run_id AS run,\n       count(*) FILTER (WHERE output->>'verdict' = 'broke') AS broke,\n       count(*) FILTER (WHERE output->>'verdict' = 'withstood') AS withstood,\n       count(*) FILTER (WHERE output->>'verdict' = 'inconclusive') AS inconclusive\nFROM steps WHERE name = 'run_experiment' GROUP BY run_id ORDER BY run_id",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "stacking": "normal",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "xTickLabelRotation": -45
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "broke"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "red"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "withstood"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "green"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "inconclusive"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "mode": "fixed",
+         "fixedColor": "orange"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": 30,
+   "type": "barchart",
+   "title": "Cost and memory per run",
+   "gridPos": {
+    "x": 12,
+    "y": 97,
+    "w": 12,
+    "h": 8
+   },
+   "description": "The cost of every run with a model, beside how often it searched its memory of earlier runs.",
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "chaos-agent-postgres"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "chaos-agent-postgres"
+     },
+     "refId": "A",
+     "rawSql": "SELECT '#' || s.run_id AS run, round(sum((CASE s.name\n  WHEN 'claude-haiku-5-5' THEN (coalesce(s.tokens_in,0)*0.10 + coalesce(s.tokens_out,0)*0.50\n       + coalesce(s.cache_read_tokens,0)*0.01 + coalesce(s.cache_write_tokens,0)*0.125)\n       * CASE WHEN coalesce(s.tokens_in,0)+coalesce(s.cache_read_tokens,0)+coalesce(s.cache_write_tokens,0) > 100000 THEN 5 ELSE 1 END\n  WHEN 'claude-sonnet-5-5' THEN coalesce(s.tokens_in,0)*2.0 + coalesce(s.tokens_out,0)*10.0\n       + coalesce(s.cache_read_tokens,0)*0.10 + coalesce(s.cache_write_tokens,0)*2.50\n  END) / 1000000.0)::numeric, 3) AS cost_usd,\n       (SELECT count(*) FROM steps k WHERE k.run_id = s.run_id AND k.name = 'search_knowledge') AS memory_searches\nFROM steps s WHERE s.kind = 'llm' GROUP BY s.run_id ORDER BY s.run_id",
+     "format": "table",
+     "editorMode": "code",
+     "rawQuery": true
+    }
+   ],
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "xTickLabelRotation": -45
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "memory_searches"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

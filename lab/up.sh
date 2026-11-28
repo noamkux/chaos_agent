@@ -5,6 +5,7 @@ set -euo pipefail
 CLUSTER_NAME="chaos-lab"
 ZONE_LABEL="topology.kubernetes.io/zone"
 PROMETHEUS_CHART_VERSION="30.0.0"
+GRAFANA_CHART_VERSION="12.5.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 CHAOS_NAMESPACE="chaos-system"
@@ -66,11 +67,25 @@ helm upgrade --install prometheus prometheus-community/prometheus \
   -f "$SCRIPT_DIR/prometheus-values.yaml" \
   --wait --timeout 5m
 
+# 4b. Grafana (simulates the target's existing Grafana); it loads the chart's dashboard from chaos-system.
+helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update >/dev/null
+helm repo update grafana-community >/dev/null
+helm upgrade --install grafana grafana-community/grafana \
+  --namespace monitoring --create-namespace \
+  --version "$GRAFANA_CHART_VERSION" \
+  -f "$SCRIPT_DIR/grafana-values.yaml" \
+  --wait --timeout 5m
+
 # 5. chaos-agent chart (installed the same way a customer would, with lab-specific values)
 helm upgrade --install chaos-agent "$REPO_DIR/charts/chaos-agent" \
   --namespace "$CHAOS_NAMESPACE" --create-namespace \
   -f "$SCRIPT_DIR/chaos-agent-values.yaml" \
   --wait --timeout 5m
+
+# A new release creates the Postgres Secret during the install; the Grafana datasource is rendered from
+# it (lookup), so one more upgrade adds it.
+helm upgrade chaos-agent "$REPO_DIR/charts/chaos-agent" \
+  --namespace "$CHAOS_NAMESPACE" -f "$SCRIPT_DIR/chaos-agent-values.yaml" --wait --timeout 5m
 
 echo "Lab $CLUSTER_NAME is ready:"
 kubectl get nodes -L "$ZONE_LABEL"

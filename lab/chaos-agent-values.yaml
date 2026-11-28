@@ -42,3 +42,10 @@ orchestrator:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
       effect: NoSchedule
+
+# The dashboard and the datasource for lab/grafana-values.yaml's sidecars (ADR-0040).
+grafana:
+  dashboard:
+    enabled: true
+  datasource:
+    enabled: true

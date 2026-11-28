@@ -166,6 +166,16 @@ weaknesses:
       journeys: [home, product, cart, checkout]
     proof: "to verify by hand: a tighter CPU limit on frontend starves it, its probes time out and the pods restart"
 
+# Changes that break any service by design, so an experiment on one teaches nothing about this
+# application: starving a service of CPU. Experiments that match one are counted apart, as trivial, not as
+# weaknesses or unknown findings.
+trivial:
+  - id: T1
+    action:
+      type: patch
+      sets: {spec.template.spec.containers.resources.limits.cpu: "<=50m"}
+    proof: every service here requests 100m to 300m of CPU; at 50m or less it cannot serve its callers at all
+
 expected_survivals:
   # Optional dependencies: frontend renders the page without them.
   - id: S1

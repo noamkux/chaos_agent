@@ -85,3 +85,21 @@ orchestrator:
       memory: 1Gi
   nodeSelector: {}
   tolerations: []
+
+# Grafana (ADR-0040). The chart does not run Grafana: it ships its dashboard and a datasource for its
+# own Postgres as objects in the release namespace, which the Grafana chart's sidecar loads when it
+# watches this namespace (sidecar.dashboards and sidecar.datasources, with searchNamespace).
+grafana:
+  dashboard:
+    enabled: false
+    # The label the sidecar looks for: the Grafana chart's sidecar.dashboards.label and labelValue.
+    labels:
+      grafana_dashboard: "1"
+    # The Grafana folder, read by the sidecar's folderAnnotation (grafana_folder).
+    folder: Chaos Agent
+  # A Secret, not a ConfigMap: it holds the Postgres password. It is rendered only once the Postgres
+  # Secret exists (lookup), so the first install of a new release needs one more helm upgrade.
+  datasource:
+    enabled: false
+    labels:
+      grafana_datasource: "1"

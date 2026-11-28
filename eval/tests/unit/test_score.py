@@ -166,3 +166,20 @@ def test_any_matches_every_path_under_it():
     expected = {"type": "patch", "name": "web", "sets": {"spec.template.metadata.annotations": "*"}}
     assert score.action_matches(expected, rollout, {})
     assert not score.action_matches({**expected, "sets": {"spec.template.metadata.labels": "*"}}, rollout, {})
+
+
+@pytest.mark.parametrize("value, expected", [("20m", 0.02), ("1", 1.0), ("0.5", 0.5), ("64Mi", 64 * 2**20), ("x", None)])
+def test_quantity(value, expected):
+    assert score.quantity(value) == expected
+
+
+def test_trivial_experiments_are_counted_apart_and_tested_counts_what_was_tried(truth):
+    starve = {"type": "patch", "kind": "apps/Deployment", "name": "queue",
+              "patch": {"spec": {"template": {"spec": {"containers": [{"resources": {"limits": {"cpu": "10m"}}}]}}}}}
+    mild = {**starve, "patch": {"spec": {"template": {"spec": {"containers": [{"resources": {"limits": {"cpu": "200m"}}}]}}}}}
+    rows = [experiment(1, starve, "broke", cart=True), experiment(2, mild, "broke", cart=True),
+            experiment(3, SCALE_DB_PROXY, "withstood", home=False)]
+    s = score.score_run(run(), rows, 0, truth, set())
+    assert s["trivial"] == [1]
+    assert [u["step"] for u in s["unknown"]] == [2]
+    assert s["tested"] == ["N6"] and s["found_broke"] == []
