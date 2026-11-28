@@ -11,7 +11,7 @@ LEVEL = os.environ["LEVEL"]
 
 # The only place in this server that decides which tool belongs to which level.
 TOOLS_BY_LEVEL = {
-    "observe": [k8s.get_workloads, k8s.get_inventory, k8s.get_placement],
+    "observe": [k8s.get_workloads, k8s.get_inventory, k8s.get_placement, k8s.inspect_workload],
     "probe": [probe.measure_journeys],
     "disrupt": [disrupt.snapshot_resource, disrupt.patch_resource, disrupt.restore_snapshot,
                 disrupt.delete_pod, disrupt.cordon_node, disrupt.taint_node_lost, disrupt.evict_pods,

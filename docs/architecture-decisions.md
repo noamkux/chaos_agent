@@ -69,6 +69,7 @@ A record is never deleted. When a decision changes, a new record supersedes it, 
 | [0032](#adr-0032) | The eval compares the agent with a deterministic baseline, on a weak and a hardened application | Proposed |
 | [0033](#adr-0033) | Retrieval over past experiments, so a run builds on the ones before it: hybrid search in pgvector, as a tool of the model | Proposed |
 | [0034](#adr-0034) | GitHub Actions runs the cheap checks on every change: lint, unit tests, the chart on kind, and the image | Accepted |
+| [0038](#adr-0038) | The model reads what Kubernetes did through inspect_workload, a read-only observe tool passed through as it is, with event messages redacted | Proposed |
 
 
 ---
@@ -419,8 +420,8 @@ The model can work at every level: at observe it reasons over the facts; at disr
 
 ## ADR-0010: The orchestrator calls every MCP tool; the model's only tool is run_experiment
 
-**Status:** Accepted, 2026-11-26
-**Related:** ADR-0011 (deterministic or agent), ADR-0015 (generic disrupt tools), ADR-0007 (the loop)
+**Status:** Accepted, 2026-11-26 (to be changed by ADR-0038: read-only observe tools passed through to the model)
+**Related:** ADR-0011 (deterministic or agent), ADR-0015 (generic disrupt tools), ADR-0007 (the loop), ADR-0038 (inspect_workload)
 
 ### Context
 At first the model called MCP tools directly: `get_workloads`, then `snapshot_resource`, `patch_resource`, `restore_snapshot`. That leaves the order of a safe experiment to the model: it could patch without a snapshot, forget to restore, or measure after the change instead of before. The question: who calls the tools?
@@ -1127,8 +1128,8 @@ Option 2.
 
 ## ADR-0029: Env values and Secrets never leave the MCP servers
 
-**Status:** Accepted, 2026-11-26
-**Related:** ADR-0012 (discovery), ADR-0017 (snapshots), ADR-0004 (W4)
+**Status:** Accepted, 2026-11-26 (extended to event messages by ADR-0038)
+**Related:** ADR-0012 (discovery), ADR-0017 (snapshots), ADR-0004 (W4), ADR-0038 (event messages)
 
 ### Context
 Workloads often carry secrets in their env, as literals or from Secrets. Anything a tool returns ends up in the prompt, in the model provider's logs, in the `steps` table, and in the report. The question: what about env values?
@@ -1495,6 +1496,56 @@ Option 4 and option 2.
 - `servers/mcp/Dockerfile`: the two stages, the venv without pip, `ENTRYPOINT`.
 - `charts/chaos-agent/templates/mcp.yaml`: `runAsUser` and `runAsGroup` 65532.
 - `.github/workflows/ci.yaml`: `python-version: "3.15"`, the `image` job.
+
+
+---
+
+<a id="adr-0038"></a>
+
+## ADR-0038: The model reads what Kubernetes did through inspect_workload, a read-only observe tool passed through as it is, with event messages redacted
+
+**Status:** Proposed, 2026-11-28 (being built)
+**Changes:** ADR-0010 (the model's tools)
+**Related:** ADR-0008 (what the servers give), ADR-0029 (env values), ADR-0016 (denylist, no Secrets for observe)
+
+### Context
+The model sees how the system is configured (the facts collected at the start of a run) and what users felt (the result of each experiment), but not what Kubernetes did during an experiment. In runs 30, 31 and 32 a rollout of productcatalogservice broke every journey for about 20 s although it has 2 replicas, and every run ended with "the mechanism is not identified", listing probe timing, the termination grace period and surge settings as candidates it could not tell apart. Events, pod states and the rollout status would. Three questions: what the tool returns, how the model gets it, and what keeps secrets out of it.
+
+### Options
+**What is returned:**
+1. **Events added to every experiment result.** No new tool, but every experiment, including those that held, adds thousands of tokens that stay in the context for the rest of the run.
+2. **A tool the model calls when something broke or surprised it,** returning the rollout status, the pods and the recent events of one workload.
+
+**How the model gets it:**
+1. **A wrapper in the orchestrator,** like `run_experiment` and `search_knowledge`. Glue code for every read tool.
+2. **The observe tool passed through as it is,** its schema taken from the server's `list_tools`, behind an allowlist of read-only tools in the orchestrator. A read tool changes nothing, so it needs no enforcement beyond the RoE's scope.
+
+**What keeps secrets out of event messages:** an exec probe's failure message carries the output of its command, which runs inside the container and can print anything it can read: a config file, a token received at runtime, an env value.
+1. **No messages at all,** only reasons and counts. Safe, but "Readiness probe failed" without "statuscode: 503" or "connection refused" loses most of the value.
+2. **gitleaks on every message.** Catches known formats (cloud keys, tokens, private keys, JWTs), not a plain password from a config file; and the other event messages are templates of Kubernetes components with no application output. One more binary in an image that ADR-0037 made minimal.
+3. **Withhold the messages of exec probe failures, and redact the rest:** the env literals of the workload's containers replaced wherever they appear, and every message cut at a length that keeps Kubernetes' own messages whole.
+
+### Decision
+Option 2, option 2 and option 3.
+- **`observe__inspect_workload(namespace, kind, name, since_s)`,** in `k8s.py`, returns:
+  - **rollout:** the update strategy (`maxSurge`, `maxUnavailable`, or a StatefulSet's or DaemonSet's update strategy), `minReadySeconds`, `progressDeadlineSeconds`, the replica counts of the status (updated, ready, available, unavailable), its conditions, and `generation` against `observedGeneration` (a rollout still in progress).
+  - **pods:** every pod the workload owns, found by the owner chain already used by `get_placement`: node, phase, ready, restarts per container, and the last terminated state (reason, exit code, finished at).
+  - **events:** the 30 most recent of the last `since_s` seconds (default 600; events are kept for about an hour), on the workload, its ReplicaSets and its pods: time, type, reason, object, count and message.
+- **Passed through:** `READ_TOOLS` in the orchestrator lists the observe tools the model may call directly; their schemas come from the server; calls go through `tools.call_tool` with that allowlist and the RoE's scope, and are recorded as steps. Tools that change anything stay behind `run_experiment`.
+- **Redaction, inside the server, before anything is returned:**
+  - **Exec probes:** an `Unhealthy` event of a container whose probe is `exec` keeps its reason and the probe's type, and its message is replaced by `message withheld (exec probe output)`.
+  - **Env literals:** every literal env value of the workload's containers is read inside the function only to be searched for, and replaced by `[redacted]` wherever it appears in a message. The values are never returned.
+  - **Length:** every message is cut at 500 characters, with `... (truncated)` at the end. 200 was considered and rejected: a `FailedScheduling` message on a four-node cluster is about 290 characters, and the part that explains W1 ("didn't match Pod's node affinity/selector") comes after the 150th.
+- **RBAC:** the built-in `view` ClusterRole that observe is bound to already reads pods, ReplicaSets and events (to be verified against the cluster before it is relied on).
+- **Prompt:** when an experiment broke or surprised the agent, inspect the workloads involved before choosing the next experiment.
+
+### Consequences
+- **Gains:** the agent can explain why something broke, not only that it did; a finding comes with its mechanism and the event that shows it.
+- **Trade-offs:** every call is one more round of the model within `MAX_ITERATIONS`, which may have to go up. A withheld exec probe message tells the agent that and when the probe failed, not what it printed.
+- **Not solved:** values from Secrets and from files the container reads are unknown to the server, so a message other than an exec probe's that carries one is only cut, not redacted; such messages are rare, since the remaining events are templates of Kubernetes components. Pattern-based redaction (gitleaks or similar) is required before any tool returns pod logs, which are application output by nature.
+
+### In the code
+- Planned: `servers/mcp/k8s.py` (`inspect_workload`, the redaction), `servers/mcp/server.py` (`TOOLS_BY_LEVEL`), `orchestrator/agent.py` (`READ_TOOLS`, the prompt), unit tests with the canary in an event message.
 
 
 ---

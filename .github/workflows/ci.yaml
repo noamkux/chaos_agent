@@ -114,6 +114,11 @@ jobs:
                   kubectl create namespace pay
                   helm install ci charts/chaos-agent -f charts/chaos-agent/ci/all-levels-values.yaml \
                       --namespace chaos-system --create-namespace --wait --timeout 5m
+            - name: The observe server may read what inspect_workload needs
+              run: |
+                  for resource in pods replicasets.apps events; do
+                      kubectl auth can-i list "$resource" -n shop --as=system:serviceaccount:chaos-system:ci-mcp-observe
+                  done
             - name: The API server type-checks every admission policy without warnings
               run: |
                   kubectl wait validatingadmissionpolicy --all \

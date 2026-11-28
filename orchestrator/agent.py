@@ -11,11 +11,16 @@ import undo
 
 from anthropic import AsyncAnthropic
 
-MAX_ITERATIONS = 20
+# Rounds of the model in one run: up to max_experiments experiments, plus searches and inspections.
+MAX_ITERATIONS = 30
 MAX_TOKENS = 16384
 INVENTORY_TOOL = "observe__get_inventory"
 WORKLOADS_TOOL = "observe__get_workloads"
 PLACEMENT_TOOL = "observe__get_placement"
+# Read-only server tools the model calls directly, with the schema the server defines (ADR-0038).
+# They change nothing, so they need no check beyond the run's scope; anything that changes the cluster
+# stays behind run_experiment.
+READ_TOOLS = {"observe__inspect_workload"}
 
 SYSTEM_PROMPT = """You are a chaos engineering agent for applications on Kubernetes. You find weaknesses by running controlled experiments within the Rules of Engagement, and you report what broke, what held, and why.
 The orchestrator runs your experiments: it measures the user journeys before, during and after your change, restores the change, and judges the result against the steady state. You choose the experiments and explain the results.
@@ -30,6 +35,7 @@ Method:
 - Pods that were rescheduled stay where they landed, so Placement is only true until the first experiment that moves pods: after a node failure, its placement_events show where they went; plan the next experiment on that placement, not on the first one.
 - A change to a workload's pod template (resources, probes, env) restarts all of its pods: that rollout is part of what you measure.
 - Read the timeline and the errors: how the journeys failed (timeouts or fast errors), for how long, and how fast they recovered.
+- When an experiment broke or surprised you, inspect the workloads involved (observe__inspect_workload) before choosing the next experiment, to find the mechanism: the rollout strategy and status, pod restarts and terminations, and the events. Name the event that shows it in your finding.
 - Choose the next experiment from what you learned. Follow up on surprises: when something breaks, find which component is to blame; when something holds, find out why.
 - A result you did not expect is not a finding until you reproduce it: run the same experiment again before you report it. A weakness seen only once is reported as unconfirmed.
 - not_run means the system was not steady before the change, so nothing was changed and nothing was counted. If it follows an experiment of yours, the system did not recover from it within the steady checks: that is a finding about recovery. Choose your next experiment elsewhere.
@@ -192,7 +198,8 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
     max_level = roe["max_level"]
     scope = roe["scope"]["namespaces"]
     # Every server tool this run's level allows. Only the orchestrator calls them.
-    server_tools = {t["name"] for t in await tools.load_tools(max_level)}
+    loaded = await tools.load_tools(max_level)
+    server_tools = {t["name"] for t in loaded}
     # Before anything else: undo what an earlier run left changed.
     await undo.restore_pending(conn, run_id, server_tools, scope)
     inventory, unreadable, discovery_steps = await discover_inventory(conn, run_id, server_tools, scope)
@@ -216,6 +223,8 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
     internal[knowledge.SEARCH_TOOL_NAME] = lambda args: knowledge.search_knowledge(
         conn, run_id, namespace, workload_names, args)
     available.append(knowledge.search_tool(workload_names))
+    read_tools = READ_TOOLS & server_tools
+    available += [t for t in loaded if t["name"] in read_tools]
 
     system = (SYSTEM_PROMPT + "\n\n" + RUN_SECTION.format(
         application=format_profile(target), max_level=max_level, rules=format_rules(roe, can_experiment),
@@ -260,7 +269,8 @@ async def run_agent(conn, run_id, model, roe, target, namespace, task):
                 if block.name in internal:
                     output = await internal[block.name](block.input)
                 else:
-                    output = await tools.call_tool(conn, run_id, set(), scope, block.name, block.input)               
+                    # A read tool runs through the allowlist and the run's scope; any other name is denied.
+                    output = await tools.call_tool(conn, run_id, read_tools, scope, block.name, block.input)               
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
         messages.append({"role": "user", "content": results})
 

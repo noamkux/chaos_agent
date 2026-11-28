@@ -1,8 +1,12 @@
 """Kubernetes tools."""
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
 from kubernetes import client, config, dynamic
 from kubernetes.client.exceptions import ApiException
 from kubernetes.dynamic.resource import ResourceList
 
+from mcp.server.mcpserver.exceptions import ToolError
 from scope import check_scope
 
 try:
@@ -269,3 +273,197 @@ def get_placement(namespace: str) -> dict[str, list]:
                             "pods": sorted(pods, key=lambda p: (p["node"] or "", p["phase"]))}
                            for (kind, name), pods in sorted(pods_of.items())]
     return result
+
+
+# ---------- inspect_workload (ADR-0038) ----------
+
+EVENTS_LIMIT = 30
+EVENT_MESSAGE_LIMIT = 500
+SINCE_S_LIMITS = (60, 3600)
+REDACTED = "[redacted]"
+EXEC_PROBE_WITHHELD = "message withheld (exec probe output)"
+PROBES = ("readinessProbe", "livenessProbe", "startupProbe")
+# Literal env values shorter than this are not searched for: "true", "8080" or "info" would be
+# replaced all over Kubernetes' own messages, and a secret that short is not one.
+MIN_REDACTED_LENGTH = 6
+
+
+def pod_containers(pod_spec):
+    """Every container of a pod spec, init containers included."""
+    return (pod_spec.get("initContainers") or []) + (pod_spec.get("containers") or [])
+
+
+def literal_env_values(pod_spec):
+    """The literal env values of a pod spec, only to be searched for in messages and replaced. They are
+    never returned (ADR-0029). Numbers are left out: they appear in messages for other reasons (ports,
+    counts) and are not secrets."""
+    values = set()
+    for container in pod_containers(pod_spec):
+        for var in container.get("env") or []:
+            value = var.get("value")
+            if isinstance(value, str) and len(value) >= MIN_REDACTED_LENGTH and not value.isdigit():
+                values.add(value)
+    return values
+
+
+def exec_probe_containers(pod_spec):
+    """The names of the containers with at least one exec probe: their probe failures carry the output of
+    a command run inside the container, which can print anything it can read."""
+    return {c["name"] for c in pod_containers(pod_spec) if any("exec" in (c.get(p) or {}) for p in PROBES)}
+
+
+def redact(text, secrets):
+    """A message with every known literal env value replaced, cut at EVENT_MESSAGE_LIMIT characters.
+    Redacting comes first, so a value cut in two by the limit is already gone."""
+    text = text or ""
+    for secret in sorted(secrets, key=len, reverse=True):
+        text = text.replace(secret, REDACTED)
+    if len(text) > EVENT_MESSAGE_LIMIT:
+        text = text[:EVENT_MESSAGE_LIMIT] + "... (truncated)"
+    return text
+
+
+def container_of(field_path):
+    """The container an event is about, from its involvedObject.fieldPath: spec.containers{server} gives
+    server. None when the event is about the whole object."""
+    if field_path and "{" in field_path and field_path.endswith("}"):
+        return field_path[field_path.index("{") + 1:-1]
+    return None
+
+
+def event_message(event, secrets, exec_containers):
+    """The message of an event as the agent may see it. A probe failure of a container with an exec probe
+    is withheld whole; when the container is not named, any exec probe in the workload withholds it."""
+    if event.get("reason") == "Unhealthy" and exec_containers:
+        container = container_of((event.get("involvedObject") or {}).get("fieldPath"))
+        if container is None or container in exec_containers:
+            return EXEC_PROBE_WITHHELD
+    return redact(event.get("message"), secrets)
+
+
+def event_time(event):
+    """When an event last happened, as an ISO string: lastTimestamp, or eventTime for events written
+    through events.k8s.io, or firstTimestamp."""
+    return event.get("lastTimestamp") or event.get("eventTime") or event.get("firstTimestamp") or ""
+
+
+def event_matches(event, workload_kind, workload_name, owned_names, pod_prefixes):
+    """True if an event is about the workload, an object it owns (its ReplicaSets), or one of its pods,
+    including pods already deleted, matched by the name prefix their owner gives them."""
+    involved = event.get("involvedObject") or {}
+    kind, name = involved.get("kind"), involved.get("name") or ""
+    if kind == workload_kind.split("/")[-1] and name == workload_name:
+        return True
+    if name in owned_names:
+        return True
+    return kind == "Pod" and any(name.startswith(prefix) for prefix in pod_prefixes)
+
+
+def event_facts(event, secrets, exec_containers):
+    """One event for the agent: when, Normal or Warning, why, about which object, how many times, and its
+    message after redaction."""
+    involved = event.get("involvedObject") or {}
+    facts = {"time": event_time(event), "type": event.get("type"), "reason": event.get("reason"),
+             "object": f"{involved.get('kind')}/{involved.get('name')}", "count": event.get("count") or 1,
+             "message": event_message(event, secrets, exec_containers)}
+    return {key: value for key, value in facts.items() if value not in (None, "")}
+
+
+def rollout_facts(obj, secrets):
+    """How a workload rolls out and where its rollout stands: the update strategy, the replica counts of
+    its status, its conditions, and whether the controller has seen the latest change."""
+    spec, status, metadata = obj.get("spec") or {}, obj.get("status") or {}, obj.get("metadata") or {}
+    facts = {
+        "strategy": spec.get("strategy") or spec.get("updateStrategy"),
+        "minReadySeconds": spec.get("minReadySeconds"),
+        "progressDeadlineSeconds": spec.get("progressDeadlineSeconds"),
+        "replicas": spec.get("replicas"),
+        **{field: status.get(field) for field in ("updatedReplicas", "readyReplicas", "availableReplicas",
+                                                    "unavailableReplicas")},
+        "generation": metadata.get("generation"),
+        "observedGeneration": status.get("observedGeneration"),
+        "conditions": [{"type": c.get("type"), "status": c.get("status"), "reason": c.get("reason"),
+                        "message": redact(c.get("message"), secrets)} for c in status.get("conditions") or []],
+    }
+    return {key: value for key, value in facts.items() if value not in (None, [], {})}
+
+
+def pod_state(pod):
+    """One pod for the agent: node, phase, whether it is ready or being deleted, and per container whether
+    it is ready, its restarts, its current state and its last termination. Reasons and exit codes only:
+    a container's own messages can carry the application's output, so they are never returned."""
+    status, metadata = pod.get("status") or {}, pod.get("metadata") or {}
+    ready = next((c.get("status") == "True" for c in status.get("conditions") or [] if c.get("type") == "Ready"),
+                 False)
+    containers = []
+    for container in (status.get("initContainerStatuses") or []) + (status.get("containerStatuses") or []):
+        state = container.get("state") or {}
+        current = next(iter(state), None)
+        facts = {"name": container.get("name"), "ready": container.get("ready"),
+                 "restarts": container.get("restartCount", 0), "state": current,
+                 "reason": (state.get(current) or {}).get("reason") if current else None}
+        last = (container.get("lastState") or {}).get("terminated")
+        if last:
+            facts["last_terminated"] = {key: last.get(key) for key in ("reason", "exitCode", "finishedAt")
+                                        if last.get(key) is not None}
+        containers.append({key: value for key, value in facts.items() if value is not None})
+    facts = {"name": metadata.get("name"), "node": (pod.get("spec") or {}).get("nodeName"),
+             "phase": status.get("phase"), "ready": ready, "deleting": bool(metadata.get("deletionTimestamp")),
+             "containers": containers}
+    return {key: value for key, value in facts.items() if value is not None}
+
+
+def inspect_workload(namespace: str, kind: str, name: str, since_s: int = 600) -> dict[str, Any]:
+    """What Kubernetes did with one workload: how it rolls out and where its rollout stands, the state of its pods, and its recent events. Use it after an experiment broke or surprised you, to find the mechanism.
+
+    kind is group/Kind, as in the workload list (apps/Deployment, argoproj.io/Rollout). since_s is how
+    far back events are read, 60 to 3600 seconds (default 600); Kubernetes keeps events for about an
+    hour.
+    "rollout": the update strategy (maxSurge and maxUnavailable for a Deployment), minReadySeconds,
+    progressDeadlineSeconds, the replica counts of the status, its conditions, and generation against
+    observedGeneration (different while a rollout is still being taken in).
+    "pods": every pod the workload owns now: node, phase, ready, deleting, and per container ready,
+    restarts, current state with its reason, and the reason, exit code and time of its last termination.
+    "events": up to 30 of the most recent events on the workload, its ReplicaSets and its pods (also
+    pods already deleted), oldest first: time, type, reason, object, count and message. Messages are cut
+    at 500 characters; known env values in them are replaced by [redacted]; the probe failures of a
+    container with an exec probe have their message withheld, since it is the output of a command run
+    inside the container. Container messages and logs are never returned.
+    """
+    check_scope(namespace)
+    if kind in SKIPPED_KINDS:
+        raise ToolError(f"kind '{kind}' is not a workload")
+    if not isinstance(since_s, int) or not SINCE_S_LIMITS[0] <= since_s <= SINCE_S_LIMITS[1]:
+        raise ToolError(f"since_s must be between {SINCE_S_LIMITS[0]} and {SINCE_S_LIMITS[1]} seconds")
+    resource = namespaced_kinds().get(kind)
+    if resource is None:
+        raise ToolError(f"kind '{kind}' is not a namespaced kind served by this cluster")
+    try:
+        obj = dynamic_client.get(resource, name=name, namespace=namespace).to_dict()
+    except ApiException as error:
+        raise ToolError(f"read {kind} {name}: {error.status} {error.reason}")
+    template = pod_template(obj)
+    if template is None:
+        raise ToolError(f"{kind} {name} has no pod template")
+    pod_spec = template["spec"]
+    secrets = literal_env_values(pod_spec)
+    exec_containers = exec_probe_containers(pod_spec)
+
+    owners_cache = {}
+    pods = [serialize(p) for p in core.list_namespaced_pod(namespace).items
+            if top_owner(namespace, p, owners_cache) == (kind, name)]
+    # The ReplicaSets this workload controls (a Deployment, an Argo Rollout): their names are the prefix
+    # of every pod they created, including pods already deleted by a rollout.
+    owned = [rs.metadata.name for rs in apps.list_namespaced_replica_set(namespace).items
+             if (controller_of(serialize(rs.metadata).get("ownerReferences")) or (None, None, None))[1:]
+             == (kind.split("/")[-1], name)]
+    pod_prefixes = [f"{rs}-" for rs in owned] or [f"{name}-"]
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=since_s)).isoformat()
+    events = [serialize(e) for e in core.list_namespaced_event(namespace).items]
+    events = [e for e in events if event_matches(e, kind, name, set(owned), pod_prefixes)
+              and event_time(e) >= cutoff[:19]]
+    events = sorted(events, key=event_time)[-EVENTS_LIMIT:]
+    return {"rollout": rollout_facts(obj, secrets),
+            "pods": [pod_state(p) for p in sorted(pods, key=lambda p: p["metadata"]["name"])],
+            "events": [event_facts(e, secrets, exec_containers) for e in events]}
