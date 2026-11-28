@@ -9,6 +9,9 @@ Terms used in this file:
   from the stored timeline, with the noise of the run's earlier experiments rebuilt from their timelines,
   so runs judged by an earlier rule are scored by the current one.
 - cited step: a step the agent's summary cites under confirmed weaknesses or known from earlier runs.
+- recall so far: what this run and the runs before it in the same table found, together. A run with
+  memory skips what is already known on purpose, so its own recall falls as the memory grows; recall so
+  far is what the series as a whole knows after it. Score one series per table for it to mean that.
 
 Flow: load_runs reads every run of the namespace up to the last one asked for, so the memory measure
 knows what earlier runs found. score_run scores one run: it matches every experiment to the entries, reads
@@ -17,6 +20,7 @@ table of all the runs asked for, then the details of each.
 
 Usage, from the repository root, with the PG* variables of the chart's Postgres:
     python eval/score.py 30 31 32 33 34 > eval/results.md
+    python eval/score.py 40 41 --ground-truth lab/apps/boutique-hardened/ground_truth.yaml
 """
 import argparse
 import re
@@ -368,6 +372,9 @@ def render(scores):
         ("Weaknesses tested at all", lambda s: f"{len(s['tested'])}/{s['weaknesses']}"),
         ("Recall, cited in the summary", lambda s: recall(s["found_cited"], s["weaknesses"])),
         ("Recall, experiments that broke", lambda s: recall(s["found_broke"], s["weaknesses"])),
+        ("Recall so far, cited (this run and the ones before it here)",
+         lambda s: recall(s.get("so_far_cited"), s["weaknesses"])),
+        ("Recall so far, experiments that broke", lambda s: recall(s.get("so_far_broke"), s["weaknesses"])),
         ("Unknown findings (to review)", lambda s: str(len(s["unknown"]))),
         ("Trivial experiments (break by design)", lambda s: str(len(s["trivial"]))),
         ("False positives, cited", lambda s: "n/a" if s["false_cited"] is None else str(len(s["false_cited"]))),
@@ -393,6 +400,7 @@ def render(scores):
                   f"- Tested: {ids(s['tested'])}",
                   f"- Found, cited: {ids(s['found_cited'])}",
                   f"- Found, broke: {ids(s['found_broke'])}",
+                  f"- Found so far, cited: {ids(s.get('so_far_cited'))}",
                   f"- False positives: cited {ids(s['false_cited'])}; broke {ids(s['false_broke'])}",
                   f"- Unverified entries shown: {ids(s['unverified'])}",
                   f"- Trivial experiments: {', '.join(f'step {n}' for n in s['trivial']) or 'none'}"]
@@ -421,12 +429,21 @@ def load_runs(conn, namespace, last):
 
 
 def score_all(runs, truth, wanted):
-    """Score every run in order, so each knows what the earlier ones broke, and keep the ones asked for."""
+    """Score every run in order, so each knows what the earlier ones broke, and keep the ones asked for,
+    each with what it and the ones asked for before it found together (recall so far). Cited so far is
+    n/a until a run with a summary."""
     known, scores = set(), []
+    so_far_cited, so_far_broke, any_summary = set(), set(), False
     for run, steps, pending in runs:
         score = score_run(run, steps, pending, truth, known)
         known.update(score["found_broke"])
         if run["id"] in wanted:
+            if score["found_cited"] is not None:
+                any_summary = True
+                so_far_cited.update(score["found_cited"])
+            so_far_broke.update(score["found_broke"])
+            score["so_far_cited"] = sorted(so_far_cited) if any_summary else None
+            score["so_far_broke"] = sorted(so_far_broke)
             scores.append(score)
     return scores
 

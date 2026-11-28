@@ -137,6 +137,21 @@ def test_score_all_carries_what_earlier_runs_broke(truth):
     assert [s["run"] for s in scores] == [2] and scores[0]["repeats"] == 1
 
 
+def test_recall_so_far_adds_up_the_runs_asked_for(truth):
+    api = {"type": "delete_pod", "kind": "apps/Deployment", "name": "api"}
+    zone = {"type": "node_failure", "zone": "zone-a", "mode": "lost"}
+    before = [experiment(1, SCALE_DB_PROXY, "broke", home=True), llm(2, "## Confirmed weaknesses\n- step 1\n")]
+    first = [experiment(1, api, "broke", cart=True), llm(2, "## Confirmed weaknesses\n- api, step 1\n")]
+    second = [experiment(1, zone, "broke", home=True), llm(2, "## Confirmed weaknesses\n- zone-a, step 1\n")]
+    baseline = [experiment(1, api, "broke", cart=True)]
+    runs = [(run(1), before, 0), (run(2, model="baseline"), baseline, 0), (run(3), first, 0), (run(4), second, 0)]
+    scores = score.score_all(runs, truth, {2, 3, 4})
+    # Run 1 is not asked for, so what it found is not in recall so far; the baseline has no summary.
+    assert [s["so_far_cited"] for s in scores] == [None, ["N1"], ["N1", "W1"]]
+    assert [s["so_far_broke"] for s in scores] == [["N1"], ["N1"], ["N1", "W1"]]
+    assert "Recall so far" in score.render(scores)
+
+
 def test_a_stored_broke_is_judged_again_from_its_timeline(truth):
     rows = [experiment(1, {"type": "delete_pod", "kind": "apps/Deployment", "name": "api"}, "broke", cart=True)]
     rows[0]["output"]["journeys"]["cart"]["timeline"] = "..s.|.s......s...s......."

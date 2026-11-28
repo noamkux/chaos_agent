@@ -8,7 +8,8 @@
 #          2. boutique: baseline, Sonnet 5 times (memory from empty, so each run remembers the ones
 #             before it), the checks plan, the productcatalogservice rollout twice (verify, 2 each)
 #          3. boutique: Haiku 3 times (its own memory, from empty), a second baseline
-#        Then every run of the night is scored into the log folder.
+#        Then every series of the night is scored into score.md in the log folder, each against the
+#        ground truth of its own app, so recall so far reads as what that series knows after each run.
 #
 # Memory: the agent's memory is the rows of knowledge_chunks for the namespace, and the hardened app runs
 # in the same namespace. So before each series the rows are moved to a table of their own
@@ -18,7 +19,7 @@
 # Ctrl+C once: stops after the current step, then puts the weak app and the memory back. Ctrl+C twice:
 # exits at once and prints what is still running. Every step's child ignores Ctrl+C, so a run is never
 # cut in the middle of an experiment.
-# Logs: ~/chaos-night/<stamp>/: night.log, steps.tsv (start, end, step, result, last run id),
+# Logs: ~/chaos-night/<stamp>/: night.log, steps.tsv (start, end, step, result, the run it made),
 # vmstat.log and docker-stats.log (the laptop's load, to check a broke against a CPU spike), and one log
 # per step.
 set -uo pipefail
@@ -32,6 +33,8 @@ CONTEXT="kind-chaos-lab"
 PG_POD="$RELEASE-postgresql-0"
 WEAK="$REPO_DIR/lab/apps/boutique"
 HARDENED="$REPO_DIR/lab/apps/boutique-hardened"
+WEAK_TRUTH="$WEAK/ground_truth.yaml"
+HARDENED_TRUTH="$HARDENED/ground_truth.yaml"
 HAIKU="claude-haiku-5-5"
 MIN_FREE_KB=$((1500 * 1024))
 JOB_TIMEOUT_S=$((65 * 60))     # the chart's activeDeadlineSeconds is 3600
@@ -87,12 +90,16 @@ last_run() { sql "SELECT coalesce(max(id), 0) FROM runs" 2>/dev/null || echo "?"
 step() {
   local name="$1"; shift
   STEP_NO=$((STEP_NO + 1))
-  local out start rc
+  local out start rc before after run="-"
   out="$LOG_DIR/$(printf '%02d' "$STEP_NO")-$name.log"
   start="$(date -Is)"
+  before="$(last_run)"
   log "step $STEP_NO $name: start"
   "$@" "$out"; rc=$?
-  printf '%s\t%s\t%s\t%s\t%s\n' "$start" "$(date -Is)" "$name" "$([ "$rc" -eq 0 ] && echo ok || echo "failed($rc)")" "$(last_run)" \
+  after="$(last_run)"
+  # The run this step made, if it made one: a step that switches apps or fails early makes none.
+  if [[ "$before" =~ ^[0-9]+$ && "$after" =~ ^[0-9]+$ ]] && [ "$after" -gt "$before" ]; then run="$after"; fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$start" "$(date -Is)" "$name" "$([ "$rc" -eq 0 ] && echo ok || echo "failed($rc)")" "$run" \
     >> "$LOG_DIR/steps.tsv"
   log "step $STEP_NO $name: $([ "$rc" -eq 0 ] && echo "done" || echo "FAILED ($rc), see $out")"
   return "$rc"
@@ -255,20 +262,33 @@ finish() {
     restore_memory "$FINAL_MEMORY" "$out" && log "memory: $FINAL_MEMORY is back in knowledge_chunks" \
       || log "ERROR: putting the memory back failed, see $out"
   fi
-  if [ "$START_RUN" != "0" ] && [ -x "$PYTHON_SCORE" ]; then
-    local runs
-    runs="$(sql "SELECT string_agg(id::text, ' ' ORDER BY id) FROM runs WHERE id > $START_RUN")"
-    if [ -n "$runs" ]; then
-      "$SCRIPT_DIR/dev.sh" up >> "$out" 2>&1
-      eval "$("$SCRIPT_DIR/dev.sh" env)"
-      # shellcheck disable=SC2086
-      (cd "$REPO_DIR" && "$PYTHON_SCORE" eval/score.py $runs > "$LOG_DIR/score.md" 2>> "$out") \
-        && log "scored runs $runs into $LOG_DIR/score.md" || log "ERROR: scoring failed, see $out"
-    fi
+  if [ -s "$LOG_DIR/steps.tsv" ] && [ -x "$PYTHON_SCORE" ]; then
+    "$SCRIPT_DIR/dev.sh" up >> "$out" 2>&1
+    eval "$("$SCRIPT_DIR/dev.sh" env)"
+    : > "$LOG_DIR/score.md"
+    score_series "The hardened app, the control group" '^hardened-' "$HARDENED_TRUTH" "$out"
+    score_series "The weak app, Sonnet, memory from empty" '^weak-sonnet-' "$WEAK_TRUTH" "$out"
+    score_series "The weak app, Haiku, memory from empty" '^weak-haiku-' "$WEAK_TRUTH" "$out"
+    score_series "The weak app, without a model (baselines, checks, rollout)" '^weak-(baseline|checks|verify)' "$WEAK_TRUTH" "$out"
+    log "scores in $LOG_DIR/score.md"
   fi
   # shellcheck disable=SC2086
   kill ${LOAD_PIDS:-} 2>/dev/null
   log "night over"
+}
+
+# One table per series: the runs the steps whose names match made, against that app's ground truth.
+score_series() {
+  local title="$1" pattern="$2" truth="$3" out="$4" runs
+  runs="$(awk -F'\t' -v p="$pattern" '$3 ~ p && $5 ~ /^[0-9]+$/ {print $5}' "$LOG_DIR/steps.tsv" | tr '\n' ' ')"
+  [ -n "$runs" ] || return 0
+  printf '## %s\n\n' "$title" >> "$LOG_DIR/score.md"
+  # shellcheck disable=SC2086  # one argument per run
+  if (cd "$REPO_DIR" && "$PYTHON_SCORE" eval/score.py $runs --ground-truth "$truth") >> "$LOG_DIR/score.md" 2>> "$out"; then
+    printf '\n' >> "$LOG_DIR/score.md"
+  else
+    log "ERROR: scoring $title (runs $runs) failed, see $out"
+  fi
 }
 
 check() {
@@ -288,6 +308,7 @@ check() {
   need kubectl --context "$CONTEXT" apply -k "$HARDENED" --dry-run=server
   need python3 -c "import mcp, psycopg, yaml"
   need "$PYTHON_SCORE" -c "import psycopg, yaml"
+  need [ -f "$HARDENED_TRUTH" ]
   need env TIMEOUT=30 "$SCRIPT_DIR/health-check.sh" "$NAMESPACE"
   echo "memory rows now: $(sql "SELECT count(*) FROM knowledge_chunks WHERE namespace = '$NAMESPACE'")"
   echo "last run: $(last_run)"

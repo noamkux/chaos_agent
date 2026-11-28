@@ -1300,7 +1300,7 @@ Compare with a baseline (option 2); found is what the summary cites (option 2); 
 - **Quality:** recall, findings matching no entry (unknown, reviewed by hand), false positives on expected survivals.
 - **Efficiency:** experiments, model rounds, tokens and cost, duration, seconds broken.
 - **Safety:** denied calls to real tools (the `read_tools_missing` step is a warning, not a call), and undos left pending, which must be zero.
-- **Memory:** experiments on what an earlier run already found, against new ones.
+- **Memory:** experiments on what an earlier run already found, against new ones; and recall so far (added 2026-11-28), what a series of runs found together up to each run. A run with memory skips what is known on purpose, so its own recall falls as the memory grows; recall so far is what the series knows after it.
 
 **The baseline (`eval/baseline.py`):** no model, through the same runner and judge: `delete_pod` on every workload that is not protected (10) and a `lost` node failure on each zone (3), 13 experiments within `max_experiments: 15`.
 
@@ -1322,8 +1322,9 @@ Compare with a baseline (option 2); found is what the summary cites (option 2); 
 - `eval/tests/unit/test_score.py`, with its own ground truth in `fixtures/`; run in CI with the orchestrator's tests.
 - `eval/baseline.py`: the `baseline` plan (`baseline_plan`, from the observe server's workloads and zones) the `verify` plan (`verify_plan`, the patterns of earlier runs, each twice), and the `checks` plan (`checks_plan`: frontend with half its CPU limit twice, with a rollout of frontend alone as its control, and the pod of emailservice deleted three times while only home is measured, to tell a weakness from the lab's shared CPU), through `runner.run_experiment`.
 - `lab/apps/boutique-hardened/`: upstream without the planted weaknesses, 3 replicas of every stateless service, a zone topology spread (`matchLabelKeys`, so one patch fits every Deployment), a `preStop` sleep and a PDB each; `lab/apps/boutique/upstream/kustomization.yaml` lets it use the vendored manifests as a base.
-- `lab/eval-night.sh`: the eval as one unattended night on a laptop left alone: the hardened app first (baseline, Sonnet four times), then the weak app (baseline, Sonnet five times, the checks plan, the rollout of productcatalogservice), then Haiku three times and a second baseline. Each series starts from an empty memory, since both apps run in the same namespace: the rows of `knowledge_chunks` are moved to a table per series, and the weak app's Sonnet memory is put back at the end. The laptop's load is logged beside every step, so a verdict can be checked against a CPU spike.
-- Planned: a ground truth for `boutique-hardened`; a `workflow_dispatch` eval in the backlog.
+- `lab/eval-night.sh`: the eval as one unattended night on a laptop left alone: the hardened app first (baseline, Sonnet four times), then the weak app (baseline, Sonnet five times, the checks plan, the rollout of productcatalogservice), then Haiku three times and a second baseline. Each series starts from an empty memory, since both apps run in the same namespace: the rows of `knowledge_chunks` are moved to a table per series, and the weak app's Sonnet memory is put back at the end. The laptop's load is logged beside every step, so a verdict can be checked against a CPU spike. Each series is scored in a table of its own, against its app's ground truth.
+- `lab/apps/boutique-hardened/ground_truth.yaml`: the control group's answer key: a required dependency scaled to 0 still breaks (the code has no fallback), one pod deleted of every stateless service and every zone lost are expected survivals, and the rollout of productcatalogservice is left unverified until the hardened runs show whether it still breaks there.
+- Planned: a `workflow_dispatch` eval in the backlog.
 
 
 ---

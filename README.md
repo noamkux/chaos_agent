@@ -1,79 +1,91 @@
-# AI Project - Chaos Agent
+# Chaos Agent
 
-An AI agent that tests the resilience of any application on Kubernetes within defined Rules of Engagement, proves each weakness with a controlled experiment, and reports what broke, what survived and how to fix it.
+An AI agent that tests the resilience of an application on Kubernetes. Within Rules of Engagement set by the cluster's owners, it decides what to break, runs each experiment under control, measures what users would feel, and reports which weaknesses it confirmed, with the experiments that prove them.
 
-all of this live with Rules Of Engagment that the client supply and the agent needs to stick to
+It is built to work on any application on any cluster: everything specific to an application is in that application's `target.yaml`, and the judge learns the application's own noise during the run.
 
+## One run
 
-## Lab environment
+1. **Discovery.** The orchestrator collects the facts itself (`get_inventory`, `get_workloads`, `get_placement`) and puts them in the prompt with their step numbers.
+2. **The model plans.** Claude, through the API, has three tools: `run_experiment`, `search_knowledge` (its memory of earlier runs) and `observe__inspect_workload` (read-only: rollout status, restarts, events). It forms a hypothesis and chooses one change.
+3. **The orchestrator runs the experiment:**
+   - checks it against the Rules of Engagement;
+   - waits until every user journey is steady, measured with k6;
+   - takes a snapshot of what will change and writes the undo to the database before acting;
+   - acts: patches a resource (replicas, resources, probes, a rollout), deletes a pod, or fails a node or a zone (drain or lost);
+   - keeps measuring, restores the change after `restore_after_s`, and measures the recovery.
+4. **The judge decides** broke, withstood or inconclusive, in code, from the measurements. The model reads the verdict and a one-line timeline per journey, and chooses the next experiment.
+5. **The summary** lists confirmed weaknesses, each citing its steps. The run's experiments and summary are indexed into the memory for the next run.
 
-The lab is a local cluster that simulates a customer environment. `lab/up.sh` brings all of it up with one command.
+## Running it
 
-- **kind cluster:** 1 control-plane and 3 workers, each worker labeled with its own zone (`topology.kubernetes.io/zone`), so zone failures can be tested.
-- **inotify limits:** `up.sh` checks the host limits before creating the cluster, since kind nodes share them and low values make pods fail randomly.
-- **Prometheus:** simulates the customer's existing monitoring, with remote write enabled for k6. It runs on the control-plane, outside the blast radius, so measurements survive node drains.
+```bash
+lab/up.sh                                  # the kind cluster, the app, Prometheus, Grafana and the chart
+lab/run-agent.sh                           # one run, as a Job from the chart's CronJob (Sonnet by default)
+MODEL=claude-haiku-5-5 lab/run-agent.sh    # a cheaper run
+lab/watch-run.sh                           # follow a run in the terminal
+kubectl -n monitoring port-forward svc/grafana 3000:80   # or follow it on the dashboard
+lab/eval-night.sh check && lab/eval-night.sh run         # the whole eval, unattended
+```
 
-## Test application
+The API key is asked for once with `read -s` and kept in a Secret; it never appears on a command line.
 
-1. Deployed a clean Online Boutique: an application we did not write, to test that the agent works on any application.
-2. Audited what is already broken in the upstream version (replicas, probes, PDBs, Redis). Without this step the agent would find real weaknesses we did not know about and be penalized for them as false positives.
-3. Ran `dependency-check.sh`, which scales each service down in turn and checks what the user sees. This showed which failures the site survives and which take it down.
-4. Investigated the `000` results and found a slow failure: when a dependency disappears, the frontend blocks for about 20 seconds instead of failing fast. This only showed up through experiment.
-5. Hardened 4 services to 2 replicas, so the planted weaknesses are subtle and not hidden behind a single replica.
-6. Planted 4 weaknesses with Kustomize patches, and verified W1 with a real node drain.
-7. Recorded all of it in one file: `ground_truth.yaml`. It is the answer key for the agent: in CI, every change to the agent runs against Online Boutique, and the results are compared to `ground_truth.yaml`.
+## Inputs, each with its owner
 
-## The product
+- **`target.yaml`** (the application team): the user journeys k6 runs, the steady state (success rate and p95), and the measurement timings.
+- **`roe.yaml`** (security or operations): the namespaces in scope, the highest action level, node actions, protected workloads, what may never be changed, and the limits per run (experiments, model rounds, restore time).
+- **The chart values** (the cluster admin): caps the probe server enforces whatever a run asks for (longest k6 run, users per second, request timeout).
 
-**Helm chart (`charts/chaos-agent`):** what a customer installs. The lab installs it the same way, with `lab/chaos-agent-values.yaml` for lab-only settings.
+## Safety
 
-**Postgres:** bundled in the chart as a StatefulSet with a PVC. The password comes from an `existingSecret` the customer provides, or is generated once and kept stable across upgrades.
+- **Three permission levels, three pods.** One MCP server codebase is deployed as observe, probe and disrupt, each with its own ServiceAccount. A run gets only the tools of its level.
+- **Every call goes through the orchestrator,** which rejects tools the run does not have and namespaces outside the scope, and records the call before it runs, denied calls included.
+- **What may never change:** Secrets, PersistentVolumeClaims, ServiceAccounts and RBAC, and the images, commands, security context and volumes of pods, always; plus the API groups and kinds the RoE denies (GitOps, cloud resources, backups, database operators). The disrupt server refuses them, and a ValidatingAdmissionPolicy enforces the same list in the API server.
+- **Protected workloads** are measured and never changed (in the lab, redis-cart, whose carts live on an emptyDir).
+- **Undo:** every change has a snapshot (a Secret in `chaos-system`) and an undo row written before the change. Undos left pending by a crash run when the next run starts.
+- **Env values and Secret values never leave the MCP servers:** tools return names and sources only, and event messages are redacted. A canary value planted in the lab is checked by unit tests.
 
-**Database schema (`orchestrator/storage/schema.sql`):**
-- `runs`: one row per run; also the queue and the per-namespace lock.
-- `steps`: every LLM call and tool call; the audit log and the checkpoint.
-- `undo_actions`: the inverse of every disruptive action, written before the action runs.
+## Measuring and judging
 
-**Orchestrator (`orchestrator/`):** connects to Postgres with the standard `PG*` environment variables, applies the schema on every start, and manages the run lifecycle (create, claim, finish). A partial unique index allows only one running run per namespace, enforced by Postgres; this was tested with two runs on the same namespace.
+- **k6** runs inside the probe pod at a constant arrival rate, so it works on any cluster with no operator. Results are counted by the second users arrived.
+- **Steady check:** before every experiment, every second of every journey must be steady, or the check waits and tries again. A system that never gets steady is `not_run`: nothing is changed and nothing is counted.
+- **The judge** gives every second a status against the steady state (`.` ok, `s` slow, `x` failed, `_` no data). It learns the application's own noise during the run, from the seconds before each action, and calls a phase degraded only when that noise would make it with a chance under 0.5%: too many bad seconds in a row, in a 10 second window, or in the whole phase. A single bad second is never a finding.
 
-## MCP servers (`servers/mcp/`)
+## Memory
 
-The agent never touches the cluster directly. It acts only through tools exposed by MCP servers.
+Every experiment is stored as a chunk built by code from its data, so the model cannot remember an experiment better than it went; summary sections are stored apart, marked as interpretation. Search is hybrid in pgvector: filtered by namespace and workload, ranked by similarity, with embeddings computed inside the cluster (fastembed). The model searches before planning experiments on a workload, and cites what it reuses as run and step.
 
-- **One codebase, one pod per level:** the same image is deployed three times with `LEVEL=observe`, `probe` or `disrupt`. Each pod registers only the tools of its level (`TOOLS_BY_LEVEL` in `server.py`) and runs with the ServiceAccount of its level, so a read-only pod never holds permissions to disrupt.
-- **The server does not trust the client:** every tool checks the namespace against `ALLOWED_NAMESPACES`, set at install time. Expected errors are raised as `ToolError`, so the reason reaches the agent; any other exception is hidden from the client and logged on the server.
-- **Small outputs:** `get_workloads` returns an allowlist of fields per Deployment, StatefulSet and DaemonSet (replicas, probes, resources, affinity, security context, volume types, env names and sources) instead of the full object, to save tokens and keep secrets out of the agent's context. Env values are never read.
-- **`get_inventory`:** lists every namespaced kind the API server serves, including CRDs, as `group/Kind` with the names of its objects, and the kinds it could not read with the reason. Secrets and controller-created objects are never listed.
+## What the chart installs (`charts/chaos-agent`)
 
-## Tool gating and audit (`orchestrator/mcp_client.py`)
+- The three MCP servers, on a Chainguard Python image with no shell, scanned, signed and shipped with an SBOM and provenance.
+- The orchestrator as a CronJob that stays suspended: one run is one Job, with no Kubernetes access of its own.
+- Postgres with pgvector: runs, every step (the audit log and the checkpoint), the undo log, the measurements and the memory.
+- Optionally, a Grafana dashboard and a Postgres datasource for the customer's Grafana sidecars: what the agent says and does, what users saw per second, every verdict, the model's tokens and cost, and every earlier run.
 
-Every tool call goes through the orchestrator, which enforces the run's rules in three layers:
+## The lab (`lab/`)
 
-1. **Visibility:** `load_tools` connects only to the servers allowed by the run's `max_level`, so the agent never sees tools above its level.
-2. **Every call is checked:** `call_tool` rejects tools not loaded for the run (including names the model invents) and namespaces outside the run's scope, before anything leaves the orchestrator.
-3. **Kubernetes RBAC:** the ServiceAccount of each server pod is the hard boundary if the first two layers fail.
+- **kind** with one control-plane and three workers, each in its own zone, so node and zone failures can be tested on a laptop. Prometheus and Grafana run on the control-plane, outside the blast radius.
+- **Online Boutique** (11 services, gRPC), vendored unchanged, with every change as a Kustomize patch: frontend pinned to one zone, an aggressive liveness probe, a tight CPU limit and a Secret in env. Real weaknesses of upstream (single replicas, a slow failure of about 20 seconds when a dependency disappears) were audited first.
+- **`boutique-hardened`:** the same app with 3 replicas, zone spread, PDBs, preStop hooks and no planted weaknesses: the eval's control group.
+- **`ground_truth.yaml`:** the answer key the agent never sees, used only by the eval.
 
-Every call is recorded in `steps` before it runs and completed after, including denied calls, so the eval counts attempted violations and not only successful ones.
+## Eval (`eval/`)
 
-## Agent loop (`orchestrator/agent/loop.py`)
+The agent is scored against the ground truth and compared with a deterministic baseline (one pod deleted per workload, one zone lost per zone) on the weak and the hardened app: what it found and cited, what broke and was not reported, false positives, cost, and safety (denied calls, pending undos). `score.py` judges every stored experiment again with the current judge, so earlier runs are scored by the current rules. Results and how to read them: [`eval/README.md`](eval/README.md) and [`eval/results.md`](eval/results.md).
 
-A harness written from scratch on the Claude API with native tool calling, without an agent framework.
+## CI (`.github/workflows/ci.yaml`)
 
-- The model proposes tool calls; the orchestrator checks, executes and records them, and returns the results.
-- Every LLM call is recorded in `steps` with its response and token usage; the full conversation can be rebuilt from `steps` after a crash.
-- The loop stops when the model finishes or after `MAX_ITERATIONS`; `MAX_TOKENS` caps each response.
-- The system prompt marks tool output as data, never instructions, as a first defense against prompt injection from the system under test.
+On every change: ruff, the unit tests of the servers, the orchestrator and the eval, helm lint and kubeconform, a check that the chart refuses unsafe values, an install on kind with a type check of every admission policy, and the MCP image built, scanned with Trivy, pushed to GHCR with its SBOM and provenance.
 
-**First run (Haiku, observe level, Online Boutique):** the loop worked end to end. The agent found N1, N4 and W3 from configuration alone, said honestly what it could not verify, missed N5 although the image tag was in the tool output, miscounted the workloads, and reported generic resource concerns without evidence. These gaps define the next steps.
+## Decisions
 
-## Facts in the prompt
-
-Before the first LLM call, the orchestrator calls `get_inventory` and `get_workloads` itself, through the same gated and audited path as any tool call (`collect` in `agent/loop.py`). Their results go into the system prompt with their step numbers, and both tools are removed from the model's tools, so the model never spends a call repeating them. If a required kind (Deployments, StatefulSets, DaemonSets, Services) cannot be read, the run fails, so a run never silently tests nothing.
+Every design decision, with the options and why: [`docs/architecture-decisions.md`](docs/architecture-decisions.md).
 
 ## Backlog
 
-- **AWS chaos with FIS:** an `aws` MCP server at disrupt level that runs FIS experiment templates. Scope enforced with IAM conditions on resource tags; FIS stop conditions and rollback map to the watchdog and the undo log. Test environment: the weather app on EKS. FIS costs $0.10 per action-minute; the main cost is the AWS environment itself.
-- **DB chaos at protocol level:** connection pool exhaustion, lock contention, slow queries. Requires a dedicated test user from the customer. Infrastructure and network level DB chaos is in scope for v1.
-- **Request-level chaos (Netflix FIT style):** inject faults only into tagged synthetic requests, using Istio fault injection or Chaos Mesh HTTPChaos. Without instrumentation this works only on the first hop.
-- **A role for every run level:** the servers' levels are permission boundaries and stay, but as run levels only disrupt does anything today: an observe or probe run has no `run_experiment` and ends with a summary of the facts. Planned: **observe as assessment**, a report of the weaknesses the facts predict, each with the experiment that would confirm it, for a person to approve before a disrupt run executes it (for production, where nothing may break); **probe as load**, a `load_experiment` that raises `new_users_per_second` step by step until the steady state breaks, and reports where.
-- **Per-run credentials for MCP servers:** servers run with no standing permissions; for each run the orchestrator issues a short-lived ServiceAccount token for the run's level.
+- Chaos Mesh (CPU stress, network faults) and a load experiment, for weaknesses that show only under load.
+- A steady check that also compares with the system's own normal, not only with the steady state.
+- Attributing a broke to the environment from node CPU in Prometheus.
+- A role for every run level: observe as an assessment to approve before a disrupt run, probe as a load test.
+- A read-only Postgres role for Grafana, and k6 points live to the second through remote write.
+- Short-lived ServiceAccount tokens per run; AWS chaos with FIS; database chaos at protocol level.

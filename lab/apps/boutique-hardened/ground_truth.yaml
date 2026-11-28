@@ -1,0 +1,267 @@
+# Answer key for the eval's control group, lab/apps/boutique-hardened (ADR-0032). The agent must never
+# see this file. Same format and matching rules as lab/apps/boutique/ground_truth.yaml.
+#
+# The hardened app is upstream Online Boutique without the planted weaknesses, with 3 replicas of every
+# stateless service spread one per zone, a PDB and a preStop sleep each. What it does not change is the
+# code: frontend still has no fallback for a required dependency that is down, so those stay weaknesses.
+# Everything a replica, a spread or a PDB fixes is an expected survival: a broke there is a false
+# positive of the judge or a weakness nobody knew of, to read by hand.
+
+app: online-boutique-hardened
+version: v0.10.4
+namespace: boutique
+
+weaknesses:
+  # A dependency down for every caller (scaled to 0): frontend has no fallback, and requests block
+  # for about 20 s before they fail, instead of failing fast (dependency-check.sh).
+  - id: N6-cartservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: cartservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [home, product, cart, checkout]
+    proof: every page reads the cart, so every journey fails, after about 20 s each
+
+  - id: N6-currencyservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: currencyservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [home, product, cart]
+    proof: every price is converted, so home, product and cart fail, after about 20 s each, instead of showing the default currency
+
+  - id: N6-productcatalogservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: productcatalogservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [home, product]
+    proof: home lists the products and product reads one, so both fail, after about 20 s each
+
+  - id: N6-shippingservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: shippingservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [cart]
+    proof: the cart page fails on its shipping quote, after about 20 s, instead of rendering without it
+
+  - id: N6-checkoutservice
+    origin: natural
+    verified: true
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: checkoutservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: broke
+      journeys: [checkout]
+    proof: placing an order blocks for about 20 s before it fails
+
+  # Expected from upstream, not yet seen on this app: frontend's gRPC connection is pinned to one pod of
+  # productcatalogservice (lab/apps/boutique/ground_truth.yaml, the rollout entry). More replicas do not
+  # change that; the preStop sleep may, if the closing connection makes frontend reconnect at once.
+  - id: rollout-productcatalogservice
+    origin: natural
+    verified: false
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: productcatalogservice
+      sets: {spec.template.metadata.annotations: "*"}
+    impact:
+      verdict: broke
+      journeys: [home, product, cart, checkout]
+    proof: to verify by the night's runs; on the weak app it broke about half the time
+
+trivial:
+  - id: T1
+    action:
+      type: patch
+      sets: {spec.template.spec.containers.resources.limits.cpu: "<=50m"}
+    proof: every service here requests 100m to 300m of CPU; at 50m or less it cannot serve its callers at all
+
+expected_survivals:
+  # Optional dependencies: frontend renders the page without them.
+  - id: S1
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: adservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: withstood
+      journeys: [home, product]
+    proof: every page returns 200 without ads
+
+  - id: S2
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: recommendationservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: withstood
+      journeys: [product]
+    proof: the product page returns 200 without recommendations
+
+  - id: S3
+    action:
+      type: patch
+      kind: apps/Deployment
+      name: emailservice
+      sets: {spec.replicas: 0}
+    impact:
+      verdict: withstood
+      journeys: [checkout]
+    proof: the order is placed; only the confirmation email is lost
+
+  # One pod of three deleted, for every stateless service.
+  - id: H-pod-adservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: adservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-cartservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: cartservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-checkoutservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: checkoutservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-currencyservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: currencyservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-emailservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: emailservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-frontend
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: frontend
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-paymentservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: paymentservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-productcatalogservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: productcatalogservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-recommendationservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: recommendationservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  - id: H-pod-shippingservice
+    action:
+      type: delete_pod
+      kind: apps/Deployment
+      name: shippingservice
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: 3 replicas behind a PDB, a preStop sleep so callers stop sending first; two pods keep serving
+
+  # A zone lost: one pod of each service is left in each of the two other zones.
+  - id: H-zone-a
+    action:
+      type: node_failure
+      zone: zone-a
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: every stateless service spreads one pod per zone; losing zone-a leaves two of each (a zone where redis-cart runs is refused, it is protected)
+
+  - id: H-zone-b
+    action:
+      type: node_failure
+      zone: zone-b
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: every stateless service spreads one pod per zone; losing zone-b leaves two of each (a zone where redis-cart runs is refused, it is protected)
+
+  - id: H-zone-c
+    action:
+      type: node_failure
+      zone: zone-c
+    impact:
+      verdict: withstood
+      journeys: [home, product, cart, checkout]
+    proof: every stateless service spreads one pod per zone; losing zone-c leaves two of each (a zone where redis-cart runs is refused, it is protected)
