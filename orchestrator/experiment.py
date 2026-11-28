@@ -10,8 +10,8 @@ Terms used in this file:
 - statuses: the status of every second of a measurement, in order.
 
 Flow: judge() takes the baseline and the measurement of one experiment. For each journey it gets the
-statuses of every second (statuses_of, which calls status_of). If any second before the action was not
-ok, the result is inconclusive. Otherwise it builds the timeline the model reads, the totals before and
+statuses of every second (statuses_of, which calls status_of). If at least MIN_BROKEN_S seconds before
+the action were not ok, the result is inconclusive. Otherwise it builds the timeline the model reads, the totals before and
 after the action (phase), and when the journey recovered (recovered_at), and decides broke or withstood.
 """
 
